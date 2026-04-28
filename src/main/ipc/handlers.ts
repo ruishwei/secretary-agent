@@ -1,0 +1,287 @@
+import { ipcMain, BrowserWindow } from "electron";
+import { IPC } from "../../shared/ipc-channels";
+import { Logger } from "../utils/logger";
+import { APP_VERSION } from "../../shared/constants";
+import type { AppSettings, AgentEvent } from "../../shared/types";
+import { DEFAULT_SETTINGS } from "../../shared/types";
+import { AgentLoop } from "../agent/agent-loop";
+
+const logger = new Logger("IPC");
+
+let settings: AppSettings = { ...DEFAULT_SETTINGS };
+let sessionMode: "ai" | "user" | "review" = "ai";
+let agentRunning = false;
+let pendingReviewId: string | null = null;
+let agentLoop: AgentLoop | null = null;
+
+function getMainWindow(): BrowserWindow | null {
+  const windows = BrowserWindow.getAllWindows();
+  return windows.length > 0 ? windows[0] : null;
+}
+
+function sendAgentEvent(win: BrowserWindow | null, event: AgentEvent) {
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.AGENT_EVENT, event);
+  }
+}
+
+async function initAgentLoop(): Promise<AgentLoop> {
+  if (agentLoop) return agentLoop;
+
+  agentLoop = new AgentLoop({
+    llm: {
+      provider: settings.llm.provider,
+      apiKey: settings.llm.apiKey,
+      model: settings.llm.model,
+      maxTokens: settings.llm.maxTokens,
+    },
+  });
+
+  await agentLoop.initialize();
+  logger.info("Agent loop initialized");
+  return agentLoop;
+}
+
+export function registerIpcHandlers(): void {
+  // ===== Chat =====
+
+  ipcMain.handle(IPC.SEND_MESSAGE, async (event, req: { text: string; attachments?: unknown[] }) => {
+    const win = getMainWindow();
+    logger.info(`Message received: "${req.text.substring(0, 100)}"`);
+
+    if (agentRunning) {
+      return {
+        messageId: `msg-${Date.now()}`,
+        status: "rejected" as const,
+        reason: "Agent is already processing a request.",
+      };
+    }
+
+    try {
+      const loop = await initAgentLoop();
+
+      if (!settings.llm.apiKey) {
+        sendAgentEvent(win, {
+          type: "error",
+          message: "No API key configured. Please set your LLM API key in Settings.",
+          recoverable: true,
+        });
+        return {
+          messageId: `msg-${Date.now()}`,
+          status: "rejected" as const,
+          reason: "No API key configured.",
+        };
+      }
+
+      agentRunning = true;
+
+      // Run agent loop asynchronously, streaming events to renderer
+      (async () => {
+        try {
+          for await (const event of loop.run(req.text)) {
+            sendAgentEvent(win, event);
+
+            if (event.type === "done" || event.type === "error") {
+              agentRunning = false;
+            }
+
+            if (event.type === "review-required") {
+              pendingReviewId = event.reviewId;
+            }
+          }
+        } catch (err: any) {
+          logger.error(`Agent loop error: ${err.message}`);
+          sendAgentEvent(win, {
+            type: "error",
+            message: `Agent error: ${err.message}`,
+            recoverable: false,
+          });
+          agentRunning = false;
+        }
+      })();
+
+      return {
+        messageId: `msg-${Date.now()}`,
+        status: "queued" as const,
+      };
+    } catch (err: any) {
+      logger.error(`Failed to start agent: ${err.message}`);
+      return {
+        messageId: `msg-${Date.now()}`,
+        status: "rejected" as const,
+        reason: err.message,
+      };
+    }
+  });
+
+  ipcMain.handle(IPC.ABORT_AGENT, async () => {
+    logger.info("Agent abort requested");
+    if (agentLoop) {
+      agentLoop.abort();
+    }
+    agentRunning = false;
+  });
+
+  // ===== Browser =====
+
+  ipcMain.handle(IPC.BROWSER_NAVIGATE_TO, async (_event, url: string) => {
+    logger.info(`Navigate to: ${url}`);
+    if (agentLoop) {
+      try {
+        const snapshot = await agentLoop["browserManager"].navigate(url);
+        const win = getMainWindow();
+        if (win) {
+          win.webContents.send(IPC.BROWSER_STATE_CHANGED, {
+            url: snapshot.pageState.url,
+            title: snapshot.pageState.title,
+            isLoading: false,
+            canGoBack: false,
+            canGoForward: false,
+          });
+        }
+      } catch (err: any) {
+        logger.error(`Navigation failed: ${err.message}`);
+      }
+    }
+  });
+
+  // ===== Session Control =====
+
+  ipcMain.handle(IPC.TAKE_OVER, async () => {
+    logger.info("User takes over");
+    sessionMode = "user";
+
+    // Pause agent
+    if (agentLoop?.isRunning()) {
+      agentLoop.abort();
+    }
+    agentRunning = false;
+
+    const win = getMainWindow();
+    if (win) {
+      win.webContents.send(IPC.MODE_CHANGED, {
+        mode: "user",
+        reason: "user_initiated",
+      });
+    }
+  });
+
+  ipcMain.handle(IPC.HAND_BACK, async () => {
+    logger.info("User hands back");
+
+    // Transition through review to capture state
+    sessionMode = "review";
+    const win = getMainWindow();
+    if (win) {
+      win.webContents.send(IPC.MODE_CHANGED, {
+        mode: "review",
+        reason: "user_handed_back",
+      });
+    }
+
+    // Transition to AI mode and resume agent
+    sessionMode = "ai";
+    if (win) {
+      win.webContents.send(IPC.MODE_CHANGED, {
+        mode: "ai",
+        reason: "resume_after_hand_back",
+      });
+    }
+
+    // Resume agent loop with current page state
+    if (agentLoop) {
+      agentRunning = true;
+      (async () => {
+        try {
+          for await (const event of agentLoop!.continueAfterHandBack()) {
+            sendAgentEvent(win, event);
+            if (event.type === "done" || event.type === "error") {
+              agentRunning = false;
+            }
+          }
+        } catch (err: any) {
+          logger.error(`Resume error: ${err.message}`);
+          sendAgentEvent(win, {
+            type: "error",
+            message: `Resume error: ${err.message}`,
+            recoverable: false,
+          });
+          agentRunning = false;
+        }
+      })();
+    }
+  });
+
+  ipcMain.handle(
+    IPC.REVIEW_RESPONSE,
+    async (_event, reviewId: string, response: string, modifications?: string) => {
+      logger.info(`Review ${reviewId}: ${response}${modifications ? ` (modifications: ${modifications})` : ""}`);
+      pendingReviewId = null;
+
+      if (agentLoop && response !== "rejected") {
+        const approved = response === "approved" || response === "modified";
+        agentRunning = true;
+        const win = getMainWindow();
+        (async () => {
+          try {
+            for await (const event of agentLoop!.resumeAfterReview(reviewId, approved, modifications)) {
+              sendAgentEvent(win, event);
+              if (event.type === "done" || event.type === "error") {
+                agentRunning = false;
+              }
+            }
+          } catch (err: any) {
+            logger.error(`Review resume error: ${err.message}`);
+            sendAgentEvent(win, {
+              type: "error",
+              message: `Review resume error: ${err.message}`,
+              recoverable: false,
+            });
+            agentRunning = false;
+          }
+        })();
+      }
+    }
+  );
+
+  // ===== Voice =====
+
+  ipcMain.handle(IPC.VOICE_TRANSCRIBE, async (_event, req: { audioData: string; language?: string }) => {
+    logger.info("Voice transcription requested");
+    return {
+      text: "",
+      confidence: 0,
+      provider: "webspeech" as const,
+    };
+  });
+
+  // ===== Settings =====
+
+  ipcMain.handle(IPC.GET_SETTINGS, async () => {
+    return settings;
+  });
+
+  ipcMain.handle(IPC.UPDATE_SETTINGS, async (_event, newSettings: Partial<AppSettings>) => {
+    settings = { ...settings, ...newSettings };
+
+    // Update agent loop with new LLM config
+    if (agentLoop && newSettings.llm) {
+      agentLoop.updateLLMConfig({
+        provider: settings.llm.provider,
+        apiKey: settings.llm.apiKey,
+        model: settings.llm.model,
+        maxTokens: settings.llm.maxTokens,
+      });
+    }
+
+    logger.info("Settings updated");
+  });
+
+  // ===== System =====
+
+  ipcMain.handle(IPC.GET_APP_VERSION, async () => {
+    return APP_VERSION;
+  });
+
+  logger.info("IPC handlers registered");
+}
