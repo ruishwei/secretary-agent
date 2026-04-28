@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel/ChatPanel";
 import { BrowserView } from "./components/BrowserView/BrowserView";
 import { ControlBar } from "./components/ControlBar/ControlBar";
@@ -6,10 +6,21 @@ import { AgentThinking } from "./components/AgentThinking/AgentThinking";
 import { ReviewDialog } from "./components/ReviewDialog/ReviewDialog";
 import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import { useSession } from "./hooks/useSession";
+import { useStore } from "./store";
 
 export default function App() {
   const { mode, reviewRequest, handleReviewResponse } = useSession();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const updateSettings = useStore((s) => s.updateSettings);
+
+  // Load persisted settings from main process on startup
+  useEffect(() => {
+    if (window.electronAPI?.getSettings) {
+      window.electronAPI.getSettings().then((settings) => {
+        updateSettings(settings);
+      });
+    }
+  }, [updateSettings]);
 
   return (
     <div className="flex flex-col h-screen">

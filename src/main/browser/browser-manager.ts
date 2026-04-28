@@ -21,16 +21,69 @@ export class BrowserManager {
   private currentSnapshot: AXSnapshot | null = null;
   private cleanupFns: Array<() => void> = [];
   private webviewWcId: number | null = null;
+  private readyPromise: Promise<void>;
+  private readyResolve: (() => void) | null = null;
 
   constructor(cdp: CDPClient) {
     this.cdp = cdp;
     this.axTree = new AccessibilityTree(cdp);
+    this.readyPromise = new Promise((resolve) => {
+      this.readyResolve = resolve;
+    });
   }
 
   /**
-   * Attach CDP to the webview's webContents (called from renderer via IPC).
+   * Wait until the browser is ready (CDP attached to webview).
+   */
+  async waitUntilReady(timeoutMs = 15000): Promise<void> {
+    const timeout = new Promise<void>((_, reject) =>
+      setTimeout(() => reject(new Error("Timed out waiting for browser to be ready")), timeoutMs)
+    );
+    await Promise.race([this.readyPromise, timeout]);
+  }
+
+  /**
+   * Initialize: find the webview's webContents and attach CDP.
+   * Polls until the webview appears (up to 30s), then attaches CDP.
+   */
+  async initialize(): Promise<void> {
+    logger.info("BrowserManager: looking for webview...");
+    const mainWin = BrowserWindow.getAllWindows()[0];
+    if (!mainWin) {
+      logger.info("BrowserManager: no window yet, will retry on first use");
+      return;
+    }
+
+    // Poll for webview webContents — it may not exist yet during app startup
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      const allWCs = webContents.getAllWebContents();
+      const webviewWc = allWCs.find((wc) => {
+        // A webview's webContents has hostWebContents pointing to the embedder
+        return (wc as any).hostWebContents?.id === mainWin.webContents.id;
+      });
+
+      if (webviewWc) {
+        await this.doAttach(webviewWc);
+        logger.info(`BrowserManager: found and attached to webview (webContents ${webviewWc.id})`);
+        return;
+      }
+
+      await this.delay(1000);
+    }
+
+    logger.error("BrowserManager: webview not found after 30s");
+  }
+
+  /**
+   * Attach CDP to a specific webview (also used by renderer IPC as fallback).
    */
   async attachToWebview(webContentsId: number): Promise<void> {
+    // If already attached to the same webview, skip
+    if (this.webviewWcId === webContentsId && this.cdp.isAttached()) {
+      return;
+    }
+
     if (this.cdp.isAttached()) {
       this.cdp.detach();
     }
@@ -40,7 +93,12 @@ export class BrowserManager {
       throw new Error(`No webContents found for ID ${webContentsId}`);
     }
 
-    this.webviewWcId = webContentsId;
+    await this.doAttach(wc);
+    logger.info(`CDP attached to webview webContents ${webContentsId}`);
+  }
+
+  private async doAttach(wc: Electron.WebContents): Promise<void> {
+    this.webviewWcId = wc.id;
     this.cdp.attach(wc);
     await this.cdp.enableDomains();
 
@@ -52,17 +110,16 @@ export class BrowserManager {
       }
     });
     this.cleanupFns.push(unsub);
-    logger.info(`CDP attached to webview webContents ${webContentsId}`);
+
+    // Signal that the browser is ready
+    if (this.readyResolve) {
+      this.readyResolve();
+      this.readyResolve = null;
+    }
   }
 
-  /**
-   * Initialize: wait for webview to be ready.
-   */
-  async initialize(): Promise<void> {
-    // The actual CDP attachment happens when the renderer sends us
-    // the webview's webContents ID via BROWSER_ATTACH_WEBVIEW IPC.
-    // This method is now a no-op placeholder.
-    logger.info("BrowserManager initialized, waiting for webview attach...");
+  isReady(): boolean {
+    return this.cdp.isAttached();
   }
 
   /**

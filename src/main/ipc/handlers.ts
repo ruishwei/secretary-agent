@@ -3,12 +3,12 @@ import { IPC } from "../../shared/ipc-channels";
 import { Logger } from "../utils/logger";
 import { APP_VERSION } from "../../shared/constants";
 import type { AppSettings, AgentEvent } from "../../shared/types";
-import { DEFAULT_SETTINGS } from "../../shared/types";
 import { AgentLoop } from "../agent/agent-loop";
+import { loadSettings, saveSettings } from "../utils/settings-store";
 
 const logger = new Logger("IPC");
 
-let settings: AppSettings = { ...DEFAULT_SETTINGS };
+let settings: AppSettings = loadSettings();
 let sessionMode: "ai" | "user" | "review" = "ai";
 let agentRunning = false;
 let pendingReviewId: string | null = null;
@@ -34,6 +34,7 @@ async function initAgentLoop(): Promise<AgentLoop> {
       apiKey: settings.llm.apiKey,
       model: settings.llm.model,
       maxTokens: settings.llm.maxTokens,
+      baseUrl: settings.llm.baseUrl,
     },
   });
 
@@ -125,15 +126,24 @@ export function registerIpcHandlers(): void {
   // ===== Browser =====
 
   ipcMain.handle(IPC.BROWSER_ATTACH_WEBVIEW, async (_event, webContentsId: number) => {
-    logger.info(`Attaching CDP to webview webContents ${webContentsId}`);
+    logger.info(`Renderer reports webview webContents ${webContentsId}`);
     try {
       if (!agentLoop) {
-        await initAgentLoop();
+        agentLoop = new AgentLoop({
+          llm: {
+            provider: settings.llm.provider,
+            apiKey: settings.llm.apiKey,
+            model: settings.llm.model,
+            maxTokens: settings.llm.maxTokens,
+            baseUrl: settings.llm.baseUrl,
+          },
+        });
+        await agentLoop.initialize();
       }
+      // Fast-path attach using the renderer-provided ID
       await agentLoop!.attachBrowser(webContentsId);
-      logger.info("CDP attached to webview successfully");
     } catch (err: any) {
-      logger.error(`Failed to attach CDP to webview: ${err.message}`);
+      logger.error(`Failed to attach CDP via IPC: ${err.message}`);
     }
   });
 
@@ -277,6 +287,9 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.UPDATE_SETTINGS, async (_event, newSettings: Partial<AppSettings>) => {
     settings = { ...settings, ...newSettings };
 
+    // Persist to disk
+    saveSettings(settings);
+
     // Update agent loop with new LLM config
     if (agentLoop && newSettings.llm) {
       agentLoop.updateLLMConfig({
@@ -284,10 +297,11 @@ export function registerIpcHandlers(): void {
         apiKey: settings.llm.apiKey,
         model: settings.llm.model,
         maxTokens: settings.llm.maxTokens,
+        baseUrl: settings.llm.baseUrl,
       });
     }
 
-    logger.info("Settings updated");
+    logger.info("Settings updated and saved");
   });
 
   // ===== System =====

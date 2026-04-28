@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useStore } from "../../store";
 import type { AppSettings } from "../../../shared/types";
 
@@ -11,6 +11,15 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
   const settings = useStore((s) => s.settings);
   const updateSettings = useStore((s) => s.updateSettings);
   const [localSettings, setLocalSettings] = useState<AppSettings>({ ...settings });
+
+  // Sync from store when panel opens (handles async load from disk)
+  useEffect(() => {
+    if (isOpen) {
+      setLocalSettings({ ...settings });
+    }
+    // Only sync on open, not on every settings change while editing
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -81,6 +90,21 @@ export function SettingsPanel({ isOpen, onClose }: Props) {
                       llm: { ...localSettings.llm, model: e.target.value },
                     })
                   }
+                  className="w-full bg-gray-800 text-gray-200 rounded px-2 py-1 text-sm mt-0.5"
+                />
+              </div>
+              <div>
+                <label className="text-xs text-gray-500">Base URL (optional)</label>
+                <input
+                  type="text"
+                  value={localSettings.llm.baseUrl || ""}
+                  onChange={(e) =>
+                    setLocalSettings({
+                      ...localSettings,
+                      llm: { ...localSettings.llm, baseUrl: e.target.value || undefined },
+                    })
+                  }
+                  placeholder="https://api.deepseek.com"
                   className="w-full bg-gray-800 text-gray-200 rounded px-2 py-1 text-sm mt-0.5"
                 />
               </div>

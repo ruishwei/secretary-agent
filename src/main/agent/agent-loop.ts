@@ -93,6 +93,15 @@ export class AgentLoop {
     this.context.setSystemPrompt(systemPrompt);
 
     try {
+      // Wait for browser to be ready (webview CDP attached)
+      yield { type: "thinking", plan: "Waiting for browser to be ready..." };
+      try {
+        await this.browserManager.waitUntilReady();
+      } catch {
+        yield { type: "error", message: "Browser is not ready. Please make sure the webview has loaded.", recoverable: true };
+        return;
+      }
+
       // Main agent loop
       while (this.turnCount < MAX_AGENT_TOOL_TURNS) {
         if (this.abortController.signal.aborted) {
@@ -136,6 +145,7 @@ export class AgentLoop {
 
         let finalText = "";
         let finalToolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+        let finalThinkingBlocks: Array<{ thinking: string; signature?: string }> | undefined;
 
         try {
           for await (const response of this.llm.sendMessage(
@@ -152,6 +162,9 @@ export class AgentLoop {
             if (response.toolCalls && response.toolCalls.length > 0) {
               finalToolCalls = response.toolCalls;
             }
+            if (response.thinkingBlocks) {
+              finalThinkingBlocks = response.thinkingBlocks;
+            }
           }
         } catch (err: any) {
           if (err.name === "AbortError") {
@@ -164,13 +177,13 @@ export class AgentLoop {
 
         // If no tool calls, this is the final response
         if (finalToolCalls.length === 0) {
-          this.context.addAssistantResponse(finalText);
+          this.context.addAssistantResponse(finalText, undefined, finalThinkingBlocks);
           yield { type: "done", summary: finalText };
           return;
         }
 
         // Process tool calls
-        this.context.addAssistantResponse(finalText, finalToolCalls);
+        this.context.addAssistantResponse(finalText, finalToolCalls, finalThinkingBlocks);
 
         // Yield tool start events
         for (const tc of finalToolCalls) {
@@ -310,6 +323,9 @@ Please review what the user did and continue with the task.`;
     this.toolExecutor.setAbortSignal(this.abortController.signal);
 
     try {
+      // Wait for browser to be ready before continuing
+      await this.browserManager.waitUntilReady();
+
       // Re-run the loop (reuses the existing context with new user message)
       while (this.turnCount < MAX_AGENT_TOOL_TURNS) {
         if (this.abortController.signal.aborted) {
@@ -337,6 +353,7 @@ Please review what the user did and continue with the task.`;
 
         let finalText = "";
         let finalToolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
+        let finalThinkingBlocks: Array<{ thinking: string; signature?: string }> | undefined;
 
         for await (const response of this.llm.sendMessage(
           currentPrompt,
@@ -351,15 +368,18 @@ Please review what the user did and continue with the task.`;
           if (response.toolCalls && response.toolCalls.length > 0) {
             finalToolCalls = response.toolCalls;
           }
+          if (response.thinkingBlocks) {
+            finalThinkingBlocks = response.thinkingBlocks;
+          }
         }
 
         if (finalToolCalls.length === 0) {
-          this.context.addAssistantResponse(finalText);
+          this.context.addAssistantResponse(finalText, undefined, finalThinkingBlocks);
           yield { type: "done", summary: finalText };
           return;
         }
 
-        this.context.addAssistantResponse(finalText, finalToolCalls);
+        this.context.addAssistantResponse(finalText, finalToolCalls, finalThinkingBlocks);
 
         for (const tc of finalToolCalls) {
           yield { type: "tool-start", toolCallId: tc.id, tool: tc.name, args: tc.input };

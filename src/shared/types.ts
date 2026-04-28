@@ -145,6 +145,7 @@ export interface AppSettings {
     apiKey: string;
     model: string;
     maxTokens: number;
+    baseUrl?: string;
   };
   voice: {
     provider: "whisper" | "webspeech" | "auto";

@@ -10,6 +10,7 @@ export interface LLMConfig {
   apiKey: string;
   model: string;
   maxTokens: number;
+  baseUrl?: string;
 }
 
 export interface LLMMessage {
@@ -18,8 +19,10 @@ export interface LLMMessage {
 }
 
 export interface LLMContentBlock {
-  type: "text" | "tool_use" | "tool_result";
+  type: "text" | "tool_use" | "tool_result" | "thinking";
   text?: string;
+  thinking?: string;
+  signature?: string;
   id?: string;
   name?: string;
   input?: Record<string, unknown>;
@@ -32,6 +35,7 @@ export interface LLMResponse {
   type: "text" | "tool_use" | "mixed";
   text?: string;
   toolCalls?: LLMToolCall[];
+  thinkingBlocks?: Array<{ thinking: string; signature?: string }>;
   stopReason: string;
 }
 
@@ -50,6 +54,12 @@ function toAnthropicMessages(messages: LLMMessage[]) {
       switch (block.type) {
         case "text":
           return { type: "text" as const, text: block.text! };
+        case "thinking":
+          return {
+            type: "thinking" as const,
+            thinking: block.thinking!,
+            ...(block.signature ? { signature: block.signature } : {}),
+          };
         case "tool_use":
           return {
             type: "tool_use" as const,
@@ -90,6 +100,11 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
       for (const block of m.content) {
         if (block.type === "text" && block.text) {
           parts.push({ type: "text", text: block.text });
+        } else if (block.type === "thinking") {
+          // DeepSeek thinking blocks — must be passed back verbatim
+          const thinkingBlock: Record<string, unknown> = { type: "thinking", thinking: block.thinking };
+          if (block.signature) thinkingBlock.signature = block.signature;
+          result.push({ role: m.role, content: thinkingBlock as any } as any);
         } else if (block.type === "tool_use") {
           result.push({
             role: "assistant",
@@ -154,10 +169,16 @@ export class LLMClient {
 
   private initClient() {
     if (this.config.provider === "anthropic" && this.config.apiKey) {
-      this.anthropic = new Anthropic({ apiKey: this.config.apiKey });
+      this.anthropic = new Anthropic({
+        apiKey: this.config.apiKey,
+        ...(this.config.baseUrl ? { baseURL: this.config.baseUrl } : {}),
+      });
     }
     if (this.config.provider === "openai" && this.config.apiKey) {
-      this.openai = new OpenAI({ apiKey: this.config.apiKey });
+      this.openai = new OpenAI({
+        apiKey: this.config.apiKey,
+        ...(this.config.baseUrl ? { baseURL: this.config.baseUrl } : {}),
+      });
     }
   }
 
@@ -197,15 +218,20 @@ export class LLMClient {
     );
 
     let currentText = "";
-    let currentToolCalls: Map<string, { name: string; input: string }> = new Map();
+    let currentThinking = "";
+    let thinkingSignature = "";
+    const currentToolCalls: Map<string, { name: string; input: string }> = new Map();
 
     for await (const event of stream) {
       if (event.type === "content_block_delta") {
         if (event.delta.type === "text_delta") {
           currentText += event.delta.text;
           yield { type: "text", text: currentText, stopReason: "streaming" };
+        } else if (event.delta.type === "thinking_delta") {
+          currentThinking += event.delta.thinking;
+        } else if (event.delta.type === "signature_delta") {
+          thinkingSignature += event.delta.signature;
         } else if (event.delta.type === "input_json_delta") {
-          // Accumulate tool input JSON
           const existing = currentToolCalls.get(event.index.toString()) || {
             name: "",
             input: "",
@@ -234,17 +260,32 @@ export class LLMClient {
           input: (block.input as Record<string, unknown>) || {},
         });
       }
+      // Capture thinking from final message if not captured during streaming
+      if (block.type === "thinking" && !currentThinking) {
+        currentThinking = (block as any).thinking || "";
+        thinkingSignature = (block as any).signature || "";
+      }
     }
+
+    const thinkingBlocks = currentThinking
+      ? [{ thinking: currentThinking, ...(thinkingSignature ? { signature: thinkingSignature } : {}) }]
+      : undefined;
 
     if (toolCalls.length > 0) {
       yield {
         type: currentText ? "mixed" : "tool_use",
         text: currentText || undefined,
         toolCalls,
+        thinkingBlocks,
         stopReason: "tool_use",
       };
     } else {
-      yield { type: "text", text: currentText, stopReason: finalMessage.stop_reason || "end_turn" };
+      yield {
+        type: "text",
+        text: currentText,
+        thinkingBlocks,
+        stopReason: finalMessage.stop_reason || "end_turn",
+      };
     }
   }
 
@@ -271,11 +312,21 @@ export class LLMClient {
     );
 
     let currentText = "";
+    let currentThinking = "";
+    let thinkingSignature = "";
     const toolCalls: Map<number, { id: string; name: string; input: string }> = new Map();
 
     for await (const chunk of stream) {
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
+
+      // Capture thinking blocks (DeepSeek)
+      if ((delta as any).thinking) {
+        currentThinking += (delta as any).thinking;
+        if ((delta as any).signature) {
+          thinkingSignature = (delta as any).signature;
+        }
+      }
 
       if (delta.content) {
         currentText += delta.content;
@@ -307,15 +358,25 @@ export class LLMClient {
       }
     }
 
+    const thinkingBlocks = currentThinking
+      ? [{ thinking: currentThinking, ...(thinkingSignature ? { signature: thinkingSignature } : {}) }]
+      : undefined;
+
     if (allToolCalls.length > 0) {
       yield {
         type: currentText ? "mixed" : "tool_use",
         text: currentText || undefined,
         toolCalls: allToolCalls,
+        thinkingBlocks,
         stopReason: "tool_calls",
       };
     } else {
-      yield { type: "text", text: currentText, stopReason: "stop" };
+      yield {
+        type: "text",
+        text: currentText,
+        thinkingBlocks,
+        stopReason: "stop",
+      };
     }
   }
 }

@@ -1,4 +1,4 @@
-import { webContents, type Debugger } from "electron";
+import type { Debugger } from "electron";
 import { Logger } from "../utils/logger";
 import { CDP_TIMEOUT_MS } from "../../shared/constants";
 
@@ -12,11 +12,8 @@ export interface CDPResponse<T = unknown> {
 
 export class CDPClient {
   private debugger: Debugger | null = null;
-  private msgId = 0;
-  private pending = new Map<number, { resolve: (v: CDPResponse) => void; reject: (e: Error) => void }>();
   private attached = false;
   private consoleMessages: string[] = [];
-  private frameAttached: (() => void) | null = null;
 
   attach(wc: Electron.WebContents): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -66,31 +63,14 @@ export class CDPClient {
       throw new Error("Debugger not attached");
     }
 
-    const id = ++this.msgId;
-    const timeout = CDP_TIMEOUT_MS;
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`CDP command ${method} timed out after ${CDP_TIMEOUT_MS}ms`)), CDP_TIMEOUT_MS)
+    );
 
-    const promise = new Promise<CDPResponse>((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      setTimeout(() => {
-        if (this.pending.has(id)) {
-          this.pending.delete(id);
-          reject(new Error(`CDP command ${method} timed out after ${timeout}ms`));
-        }
-      }, timeout);
-    });
+    const command = this.debugger.sendCommand(method, params);
 
-    try {
-      this.debugger.sendCommand(method, params);
-    } catch (e) {
-      this.pending.delete(id);
-      throw e;
-    }
-
-    const response = await promise;
-    if (response.error) {
-      throw new Error(`CDP error: ${response.error.message} (code ${response.error.code})`);
-    }
-    return response.result as T;
+    const result = await Promise.race([command, timeout]);
+    return result as T;
   }
 
   getConsoleMessages(): string[] {

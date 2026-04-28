@@ -43,17 +43,28 @@ export class ContextManager {
   }
 
   /**
-   * Add an assistant response with optional tool calls.
+   * Add an assistant response with optional tool calls and thinking blocks.
    */
-  addAssistantResponse(text: string, toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>) {
-    if (toolCalls && toolCalls.length > 0) {
-      const blocks: LLMContentBlock[] = [];
-      if (text) {
-        blocks.push({ type: "text", text });
+  addAssistantResponse(
+    text: string,
+    toolCalls?: Array<{ id: string; name: string; input: Record<string, unknown> }>,
+    thinkingBlocks?: Array<{ thinking: string; signature?: string }>
+  ) {
+    const blocks: LLMContentBlock[] = [];
+    if (thinkingBlocks) {
+      for (const tb of thinkingBlocks) {
+        blocks.push({ type: "thinking", thinking: tb.thinking, signature: tb.signature });
       }
+    }
+    if (text) {
+      blocks.push({ type: "text", text });
+    }
+    if (toolCalls && toolCalls.length > 0) {
       for (const tc of toolCalls) {
         blocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.input });
       }
+    }
+    if (blocks.length > 0) {
       this.addMessage({ role: "assistant", content: blocks });
     } else {
       this.addMessage({ role: "assistant", content: text });

@@ -7,6 +7,7 @@ export function BrowserView() {
   const mode = useStore((s) => s.mode);
   const containerRef = useRef<HTMLDivElement>(null);
   const webviewRef = useRef<HTMLElement | null>(null);
+  const cdpAttachedRef = useRef(false);
 
   // Create and manage the webview element imperatively
   useEffect(() => {
@@ -19,19 +20,22 @@ export function BrowserView() {
       wv.style.height = "100%";
       wv.setAttribute("allowpopups", "false");
       wv.setAttribute("partition", "persist:browser-sec");
-      if (browserUrl) {
-        wv.setAttribute("src", browserUrl);
-      }
-      containerRef.current.appendChild(wv);
-      webviewRef.current = wv;
 
-      // Send the webview's webContents ID to the main process for CDP attachment
+      // Attach dom-ready listener BEFORE setting src to avoid race condition
       wv.addEventListener("dom-ready", () => {
-        const wcId = (wv as any).getWebContentsId?.();
-        if (wcId && window.electronAPI?.attachWebview) {
-          window.electronAPI.attachWebview(wcId);
+        if (!cdpAttachedRef.current) {
+          cdpAttachedRef.current = true;
+          const wcId = (wv as any).getWebContentsId?.();
+          if (wcId && window.electronAPI?.attachWebview) {
+            window.electronAPI.attachWebview(wcId);
+          }
         }
       });
+
+      // Always set a src so dom-ready fires
+      wv.setAttribute("src", browserUrl || "about:blank");
+      containerRef.current.appendChild(wv);
+      webviewRef.current = wv;
     } else if (browserUrl && webviewRef.current.getAttribute("src") !== browserUrl) {
       webviewRef.current.setAttribute("src", browserUrl);
     }
