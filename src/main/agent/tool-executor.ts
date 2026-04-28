@@ -1,5 +1,6 @@
 import type { ToolDefinition } from "../../shared/tool-schemas";
 import type { BrowserManager } from "../browser/browser-manager";
+import type { LLMClient } from "./llm-client";
 import { Logger } from "../utils/logger";
 import { executeBrowserNavigate } from "./tools/browser/browser-navigate";
 import { executeBrowserSnapshot } from "./tools/browser/browser-snapshot";
@@ -11,6 +12,10 @@ import { executeBrowserPress } from "./tools/browser/browser-press";
 import { executeBrowserWait } from "./tools/browser/browser-wait";
 import { executeBrowserGetPageState } from "./tools/browser/browser-get-page-state";
 import { executeBrowserConsole } from "./tools/browser/browser-console";
+import { executeBrowserVision } from "./tools/browser/browser-vision";
+import { executeBrowserExtract } from "./tools/browser/browser-extract";
+import { executeBrowserFillForm } from "./tools/browser/browser-fill-form";
+import { executeBrowserRequestReview } from "./tools/browser/browser-request-review";
 
 const logger = new Logger("ToolExec");
 
@@ -31,11 +36,13 @@ export type ToolName = string;
 export class ToolExecutor {
   private handlers = new Map<ToolName, ToolHandler>();
   private browserManager: BrowserManager;
+  private llmClient: LLMClient | null = null;
   private abortSignal: AbortSignal | null = null;
   private reviewCallback: ((reviewType: string, reason: string, content: unknown) => Promise<{ approved: boolean; modifications?: string }>) | null = null;
 
-  constructor(browserManager: BrowserManager) {
+  constructor(browserManager: BrowserManager, llmClient?: LLMClient) {
     this.browserManager = browserManager;
+    this.llmClient = llmClient || null;
   }
 
   /**
@@ -50,6 +57,7 @@ export class ToolExecutor {
    */
   registerBrowserTools() {
     const browser = this.browserManager;
+    const llm = this.llmClient;
     const tools: ToolHandler[] = [
       executeBrowserNavigate(browser),
       executeBrowserSnapshot(browser),
@@ -61,6 +69,10 @@ export class ToolExecutor {
       executeBrowserWait(browser),
       executeBrowserGetPageState(browser),
       executeBrowserConsole(browser),
+      executeBrowserVision(browser, llm!),
+      executeBrowserExtract(browser, llm!),
+      executeBrowserFillForm(browser),
+      executeBrowserRequestReview(),
     ];
     for (const tool of tools) {
       this.register(tool);

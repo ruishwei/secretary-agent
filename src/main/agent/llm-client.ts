@@ -162,6 +162,81 @@ export class LLMClient {
     this.initClient();
   }
 
+  /**
+   * Simple single-turn text query (no tools, no streaming).
+   */
+  async simpleQuery(systemPrompt: string, userMessage: string): Promise<string> {
+    if (this.config.provider === "anthropic" && this.anthropic) {
+      const response = await this.anthropic.messages.create({
+        model: this.config.model,
+        max_tokens: 2048,
+        system: systemPrompt,
+        messages: [{ role: "user", content: userMessage }],
+      });
+      const textBlock = response.content.find((b) => b.type === "text");
+      return (textBlock as any)?.text || "";
+    } else if (this.config.provider === "openai" && this.openai) {
+      const response = await this.openai.chat.completions.create({
+        model: this.config.model,
+        max_tokens: 2048,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userMessage },
+        ],
+      });
+      return response.choices[0]?.message?.content || "";
+    }
+    throw new Error("No LLM client configured");
+  }
+
+  /**
+   * Single-turn vision query: send an image + question, get a text answer.
+   */
+  async visionQuery(screenshotDataUrl: string, question: string): Promise<string> {
+    if (this.config.provider === "anthropic" && this.anthropic) {
+      return this.visionAnthropic(screenshotDataUrl, question);
+    } else if (this.config.provider === "openai" && this.openai) {
+      return this.visionOpenAI(screenshotDataUrl, question);
+    }
+    throw new Error("No LLM client configured for vision");
+  }
+
+  private async visionAnthropic(screenshotDataUrl: string, question: string): Promise<string> {
+    // Extract base64 data from data URL
+    const match = screenshotDataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+    const mediaType = match ? `image/${match[1]}` : "image/png";
+    const data = match ? match[2] : screenshotDataUrl;
+
+    const response = await this.anthropic!.messages.create({
+      model: this.config.model,
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image", source: { type: "base64", media_type: mediaType as any, data } },
+          { type: "text", text: question },
+        ],
+      }],
+    });
+    const textBlock = response.content.find((b) => b.type === "text");
+    return (textBlock as any)?.text || "No vision response";
+  }
+
+  private async visionOpenAI(screenshotDataUrl: string, question: string): Promise<string> {
+    const response = await this.openai!.chat.completions.create({
+      model: this.config.model,
+      max_tokens: 1024,
+      messages: [{
+        role: "user",
+        content: [
+          { type: "image_url", image_url: { url: screenshotDataUrl } },
+          { type: "text", text: question },
+        ],
+      }],
+    });
+    return response.choices[0]?.message?.content || "No vision response";
+  }
+
   updateConfig(config: Partial<LLMConfig>) {
     this.config = { ...this.config, ...config };
     this.initClient();

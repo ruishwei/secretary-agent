@@ -30,7 +30,7 @@ export class AgentLoop {
     this.llm = new LLMClient(config.llm);
     this.cdp = new CDPClient();
     this.browserManager = new BrowserManager(this.cdp);
-    this.toolExecutor = new ToolExecutor(this.browserManager);
+    this.toolExecutor = new ToolExecutor(this.browserManager, this.llm);
     this.toolExecutor.registerBrowserTools();
     this.context = new ContextManager(config.llm.maxTokens);
   }

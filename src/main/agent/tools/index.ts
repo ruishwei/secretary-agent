@@ -9,4 +9,8 @@ export {
   executeBrowserWait,
   executeBrowserGetPageState,
   executeBrowserConsole,
+  executeBrowserVision,
+  executeBrowserExtract,
+  executeBrowserFillForm,
+  executeBrowserRequestReview,
 } from "./browser/index";

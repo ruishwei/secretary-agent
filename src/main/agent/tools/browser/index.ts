@@ -8,3 +8,7 @@ export { executeBrowserPress } from "./browser-press";
 export { executeBrowserWait } from "./browser-wait";
 export { executeBrowserGetPageState } from "./browser-get-page-state";
 export { executeBrowserConsole } from "./browser-console";
+export { executeBrowserVision } from "./browser-vision";
+export { executeBrowserExtract } from "./browser-extract";
+export { executeBrowserFillForm } from "./browser-fill-form";
+export { executeBrowserRequestReview } from "./browser-request-review";
