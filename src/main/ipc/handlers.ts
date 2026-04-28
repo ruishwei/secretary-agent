@@ -124,11 +124,24 @@ export function registerIpcHandlers(): void {
 
   // ===== Browser =====
 
+  ipcMain.handle(IPC.BROWSER_ATTACH_WEBVIEW, async (_event, webContentsId: number) => {
+    logger.info(`Attaching CDP to webview webContents ${webContentsId}`);
+    try {
+      if (!agentLoop) {
+        await initAgentLoop();
+      }
+      await agentLoop!.attachBrowser(webContentsId);
+      logger.info("CDP attached to webview successfully");
+    } catch (err: any) {
+      logger.error(`Failed to attach CDP to webview: ${err.message}`);
+    }
+  });
+
   ipcMain.handle(IPC.BROWSER_NAVIGATE_TO, async (_event, url: string) => {
     logger.info(`Navigate to: ${url}`);
     if (agentLoop) {
       try {
-        const snapshot = await agentLoop["browserManager"].navigate(url);
+        const snapshot = await agentLoop.navigateBrowser(url);
         const win = getMainWindow();
         if (win) {
           win.webContents.send(IPC.BROWSER_STATE_CHANGED, {

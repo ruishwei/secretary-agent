@@ -27,11 +27,11 @@ function createWindow(): void {
   const csp = MAIN_WINDOW_VITE_DEV_SERVER_URL
     ? [
         "default-src 'self';",
-        "script-src 'self';",
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval';",
         "style-src 'self' 'unsafe-inline';",
         "img-src 'self' data: https:;",
         "media-src 'self' blob:;",
-        "connect-src 'self' ws://localhost:5173 wss://localhost:5173;",
+        "connect-src 'self' ws://localhost:5173 wss://localhost:5173 http://localhost:5173;",
         "font-src 'self' data:;",
       ].join(" ")
     : [

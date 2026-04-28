@@ -24,6 +24,14 @@ export function BrowserView() {
       }
       containerRef.current.appendChild(wv);
       webviewRef.current = wv;
+
+      // Send the webview's webContents ID to the main process for CDP attachment
+      wv.addEventListener("dom-ready", () => {
+        const wcId = (wv as any).getWebContentsId?.();
+        if (wcId && window.electronAPI?.attachWebview) {
+          window.electronAPI.attachWebview(wcId);
+        }
+      });
     } else if (browserUrl && webviewRef.current.getAttribute("src") !== browserUrl) {
       webviewRef.current.setAttribute("src", browserUrl);
     }

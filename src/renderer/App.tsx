@@ -1,18 +1,20 @@
-import React from "react";
+import React, { useState } from "react";
 import { ChatPanel } from "./components/ChatPanel/ChatPanel";
 import { BrowserView } from "./components/BrowserView/BrowserView";
 import { ControlBar } from "./components/ControlBar/ControlBar";
 import { AgentThinking } from "./components/AgentThinking/AgentThinking";
 import { ReviewDialog } from "./components/ReviewDialog/ReviewDialog";
+import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import { useSession } from "./hooks/useSession";
 
 export default function App() {
   const { mode, reviewRequest, handleReviewResponse } = useSession();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <div className="flex flex-col h-screen">
       {/* Control Bar — top strip */}
-      <ControlBar />
+      <ControlBar onOpenSettings={() => setSettingsOpen(true)} />
 
       {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden">
@@ -37,6 +39,12 @@ export default function App() {
           onResponse={handleReviewResponse}
         />
       )}
+
+      {/* Settings Modal */}
+      <SettingsPanel
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </div>
   );
 }

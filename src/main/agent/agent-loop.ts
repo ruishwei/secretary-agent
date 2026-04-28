@@ -44,6 +44,20 @@ export class AgentLoop {
   }
 
   /**
+   * Attach CDP to a specific webview by its webContents ID.
+   */
+  async attachBrowser(webContentsId: number): Promise<void> {
+    await this.browserManager.attachToWebview(webContentsId);
+  }
+
+  /**
+   * Navigate the embedded browser to a URL and return a snapshot.
+   */
+  async navigateBrowser(url: string) {
+    return this.browserManager.navigate(url);
+  }
+
+  /**
    * Update LLM configuration (e.g., when settings change).
    */
   updateLLMConfig(config: LLMConfig) {

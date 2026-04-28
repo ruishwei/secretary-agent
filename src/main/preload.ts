@@ -43,6 +43,9 @@ const electronAPI = {
     return () => ipcRenderer.removeListener(IPC.BROWSER_SCREENSHOT, handler);
   },
 
+  attachWebview: (webContentsId: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_ATTACH_WEBVIEW, webContentsId),
+
   navigateTo: (url: string): Promise<void> =>
     ipcRenderer.invoke(IPC.BROWSER_NAVIGATE_TO, url),
 

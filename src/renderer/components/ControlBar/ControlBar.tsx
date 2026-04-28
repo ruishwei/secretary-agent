@@ -1,7 +1,11 @@
 import React from "react";
 import { useStore } from "../../store";
 
-export function ControlBar() {
+interface Props {
+  onOpenSettings: () => void;
+}
+
+export function ControlBar({ onOpenSettings }: Props) {
   const mode = useStore((s) => s.mode);
   const isStreaming = useStore((s) => s.isStreaming);
 
@@ -47,6 +51,13 @@ export function ControlBar() {
             Hand Back to AI
           </button>
         ) : null}
+        <button
+          onClick={onOpenSettings}
+          className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-200 rounded transition-colors"
+          title="Settings"
+        >
+          Settings
+        </button>
       </div>
     </div>
   );

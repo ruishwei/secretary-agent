@@ -1,4 +1,4 @@
-import { BrowserWindow } from "electron";
+import { webContents, BrowserWindow } from "electron";
 import { CDPClient } from "./cdp-client";
 import { AccessibilityTree, type AXSnapshot } from "./accessibility-tree";
 import { Logger } from "../utils/logger";
@@ -20,6 +20,7 @@ export class BrowserManager {
   private currentTitle = "";
   private currentSnapshot: AXSnapshot | null = null;
   private cleanupFns: Array<() => void> = [];
+  private webviewWcId: number | null = null;
 
   constructor(cdp: CDPClient) {
     this.cdp = cdp;
@@ -27,24 +28,20 @@ export class BrowserManager {
   }
 
   /**
-   * Initialize: attach CDP to the active webview and enable domains.
+   * Attach CDP to the webview's webContents (called from renderer via IPC).
    */
-  async initialize(): Promise<void> {
-    const win = BrowserWindow.getAllWindows()[0];
-    if (!win) throw new Error("No BrowserWindow found");
+  async attachToWebview(webContentsId: number): Promise<void> {
+    if (this.cdp.isAttached()) {
+      this.cdp.detach();
+    }
 
-    // Find the webview contents
-    const webviewContents = win.webContents;
+    const wc = webContents.fromId(webContentsId);
+    if (!wc) {
+      throw new Error(`No webContents found for ID ${webContentsId}`);
+    }
 
-    // The webview is embedded in the renderer. We need to find the <webview> element's webContents.
-    // In Electron, <webview> is a separate WebContents, but it's managed by the renderer process.
-    // For CDP, we attach to the main window's webContents and use Target domain to find the webview.
-
-    // Actually, for a simpler approach, we attach to the main window and interact through it.
-    // The <webview> tag in the renderer process hosts its own WebContents accessible via
-    // the webview's getWebContentsId(). We'll use the host window's CDP to manage navigation.
-
-    this.cdp.attach(webviewContents);
+    this.webviewWcId = webContentsId;
+    this.cdp.attach(wc);
     await this.cdp.enableDomains();
 
     // Listen for frame navigations
@@ -55,6 +52,17 @@ export class BrowserManager {
       }
     });
     this.cleanupFns.push(unsub);
+    logger.info(`CDP attached to webview webContents ${webContentsId}`);
+  }
+
+  /**
+   * Initialize: wait for webview to be ready.
+   */
+  async initialize(): Promise<void> {
+    // The actual CDP attachment happens when the renderer sends us
+    // the webview's webContents ID via BROWSER_ATTACH_WEBVIEW IPC.
+    // This method is now a no-op placeholder.
+    logger.info("BrowserManager initialized, waiting for webview attach...");
   }
 
   /**
