@@ -303,30 +303,6 @@ export class AgentLoop {
   }
 
   /**
-   * Continue agent loop after hand-back from user mode.
-   */
-  async *continueAfterHandBack(): AsyncGenerator<AgentEvent> {
-    // Capture current page state after user's manual operations
-    const pageState = this.browserManager.getPageState();
-    const allTabs = this.browserManager.getAllTabs();
-    let snapshot: string | undefined;
-    try {
-      snapshot = (await this.browserManager.getSnapshot(true)).text;
-    } catch { /* ignore */ }
-
-    const resumeMsg = `The user has handed back control. Current page state:
-URL: ${pageState.url}
-Title: ${pageState.title}
-${snapshot ? `Page content:\n${snapshot}` : "(browser state unavailable)"}
-Open tabs: ${allTabs.map((t) => `${t.isActive ? ">" : ""}${t.tabId}: ${t.url}`).join(", ")}
-
-Please review what the user did and continue with the task.`;
-
-    this.context.addUserMessage(resumeMsg);
-    yield* this.continueLoop();
-  }
-
-  /**
    * Internal method to continue the agent loop from current context.
    */
   private async *continueLoop(): AsyncGenerator<AgentEvent> {

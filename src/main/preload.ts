@@ -5,7 +5,6 @@ import type {
   SendMessageResponse,
   AgentEvent,
   BrowserState,
-  SessionModeChangedEvent,
   ReviewResponse,
   VoiceTranscribeRequest,
   VoiceResult,
@@ -79,16 +78,6 @@ const electronAPI = {
   },
 
   // Session Control
-  takeOver: (): Promise<void> => ipcRenderer.invoke(IPC.TAKE_OVER),
-  handBack: (): Promise<void> => ipcRenderer.invoke(IPC.HAND_BACK),
-
-  onModeChanged: (callback: (event: SessionModeChangedEvent) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: SessionModeChangedEvent) =>
-      callback(data);
-    ipcRenderer.on(IPC.MODE_CHANGED, handler);
-    return () => ipcRenderer.removeListener(IPC.MODE_CHANGED, handler);
-  },
-
   reviewResponse: (reviewId: string, response: ReviewResponse, modifications?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.REVIEW_RESPONSE, reviewId, response, modifications),
 

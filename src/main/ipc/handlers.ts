@@ -9,9 +9,7 @@ import { loadSettings, saveSettings } from "../utils/settings-store";
 const logger = new Logger("IPC");
 
 let settings: AppSettings = loadSettings();
-let sessionMode: "ai" | "user" | "review" = "ai";
 let agentRunning = false;
-let pendingReviewId: string | null = null;
 let agentLoop: AgentLoop | null = null;
 
 function getMainWindow(): BrowserWindow | null {
@@ -87,7 +85,7 @@ export function registerIpcHandlers(): void {
             }
 
             if (event.type === "review-required") {
-              pendingReviewId = event.reviewId;
+              // reviewId is passed back via REVIEW_RESPONSE handler
             }
           }
         } catch (err: any) {
@@ -210,78 +208,12 @@ export function registerIpcHandlers(): void {
     }
   });
 
-  // ===== Session Control =====
-
-  ipcMain.handle(IPC.TAKE_OVER, async () => {
-    logger.info("User takes over");
-    sessionMode = "user";
-
-    // Pause agent
-    if (agentLoop?.isRunning()) {
-      agentLoop.abort();
-    }
-    agentRunning = false;
-
-    const win = getMainWindow();
-    if (win) {
-      win.webContents.send(IPC.MODE_CHANGED, {
-        mode: "user",
-        reason: "user_initiated",
-      });
-    }
-  });
-
-  ipcMain.handle(IPC.HAND_BACK, async () => {
-    logger.info("User hands back");
-
-    // Transition through review to capture state
-    sessionMode = "review";
-    const win = getMainWindow();
-    if (win) {
-      win.webContents.send(IPC.MODE_CHANGED, {
-        mode: "review",
-        reason: "user_handed_back",
-      });
-    }
-
-    // Transition to AI mode and resume agent
-    sessionMode = "ai";
-    if (win) {
-      win.webContents.send(IPC.MODE_CHANGED, {
-        mode: "ai",
-        reason: "resume_after_hand_back",
-      });
-    }
-
-    // Resume agent loop with current page state
-    if (agentLoop) {
-      agentRunning = true;
-      (async () => {
-        try {
-          for await (const event of agentLoop!.continueAfterHandBack()) {
-            sendAgentEvent(win, event);
-            if (event.type === "done" || event.type === "error") {
-              agentRunning = false;
-            }
-          }
-        } catch (err: any) {
-          logger.error(`Resume error: ${err.message}`);
-          sendAgentEvent(win, {
-            type: "error",
-            message: `Resume error: ${err.message}`,
-            recoverable: false,
-          });
-          agentRunning = false;
-        }
-      })();
-    }
-  });
+  // ===== Session Control (review) =====
 
   ipcMain.handle(
     IPC.REVIEW_RESPONSE,
     async (_event, reviewId: string, response: string, modifications?: string) => {
       logger.info(`Review ${reviewId}: ${response}${modifications ? ` (modifications: ${modifications})` : ""}`);
-      pendingReviewId = null;
 
       if (agentLoop && response !== "rejected") {
         const approved = response === "approved" || response === "modified";

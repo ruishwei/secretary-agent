@@ -6,7 +6,7 @@ export function BrowserView() {
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
   const isLoading = useStore((s) => s.tabs.some((t) => t.isLoading));
-  const mode = useStore((s) => s.mode);
+  const isStreaming = useStore((s) => s.isStreaming);
   const addTab = useStore((s) => s.addTab);
   const updateTab = useStore((s) => s.updateTab);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -203,7 +203,7 @@ export function BrowserView() {
         </div>
       )}
 
-      {mode === "ai" && (
+      {isStreaming && (
         <div className="absolute inset-0 z-10 bg-transparent cursor-not-allowed" />
       )}
 

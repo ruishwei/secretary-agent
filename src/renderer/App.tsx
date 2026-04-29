@@ -11,7 +11,7 @@ import { useSession } from "./hooks/useSession";
 import { useStore } from "./store";
 
 export default function App() {
-  const { mode, reviewRequest, handleReviewResponse } = useSession();
+  const { reviewRequest, handleReviewResponse } = useSession();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const updateSettings = useStore((s) => s.updateSettings);
 
