@@ -8,7 +8,8 @@ export function executeBrowserVision(browser: BrowserManager, llm: LLMClient): T
     definition: BROWSER_VISION,
     async execute(args) {
       const question = args.question as string;
-      const screenshot = await browser.screenshot();
+      const tabId = args.tabId as string | undefined;
+      const screenshot = await browser.screenshot(tabId);
       const answer = await llm.visionQuery(screenshot, question);
       return {
         success: true,

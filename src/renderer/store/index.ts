@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatMessage, BrowserState, SessionMode, ReviewRequest, AgentEvent, AppSettings } from "../../shared/types";
+import type { ChatMessage, BrowserState, SessionMode, ReviewRequest, AgentEvent, AppSettings, ChatMessageBlock, Tab } from "../../shared/types";
 import { DEFAULT_SETTINGS } from "../../shared/types";
 
 // ===== Chat Slice =====
@@ -9,6 +9,8 @@ interface ChatSlice {
   isStreaming: boolean;
   addMessage: (msg: ChatMessage) => void;
   updateLastAssistantMessage: (content: string) => void;
+  appendBlockToLastAssistant: (block: ChatMessageBlock) => void;
+  updateToolCallBlock: (toolCallId: string, result: string, success: boolean) => void;
   setStreaming: (streaming: boolean) => void;
   clearMessages: () => void;
 }
@@ -16,13 +18,14 @@ interface ChatSlice {
 // ===== Browser Slice =====
 
 interface BrowserSlice {
-  browserUrl: string;
-  browserTitle: string;
-  isLoading: boolean;
-  canGoBack: boolean;
-  canGoForward: boolean;
+  tabs: Tab[];
+  activeTabId: string | null;
   screenshotDataUrl: string | null;
   highlightedElement: string | null;
+  addTab: (tab: Tab) => void;
+  removeTab: (tabId: string) => void;
+  setActiveTab: (tabId: string) => void;
+  updateTab: (tabId: string, patch: Partial<Tab>) => void;
   updateBrowserState: (state: Partial<BrowserState>) => void;
   setScreenshot: (dataUrl: string | null) => void;
   setHighlightedElement: (ref: string | null) => void;
@@ -79,25 +82,92 @@ export const useStore = create<AppStore>((set) => ({
       }
       return { messages: msgs };
     }),
+  appendBlockToLastAssistant: (block) =>
+    set((s) => {
+      const msgs = [...s.messages];
+      const lastIdx = msgs.length - 1;
+      if (lastIdx >= 0 && msgs[lastIdx].role === "assistant") {
+        const msg = msgs[lastIdx];
+        // For thinking blocks, deduplicate by replacing the last thinking block
+        if (block.type === "thinking") {
+          const blocks = [...(msg.blocks || [])];
+          const lastBlock = blocks[blocks.length - 1];
+          if (lastBlock?.type === "thinking") {
+            blocks[blocks.length - 1] = block;
+          } else {
+            blocks.push(block);
+          }
+          msgs[lastIdx] = { ...msg, blocks };
+        } else if (block.type === "tool-call") {
+          const blocks = [...(msg.blocks || []), block];
+          msgs[lastIdx] = { ...msg, blocks };
+        } else {
+          const blocks = [...(msg.blocks || []), block];
+          msgs[lastIdx] = { ...msg, blocks };
+        }
+      }
+      return { messages: msgs };
+    }),
+  updateToolCallBlock: (toolCallId, result, success) =>
+    set((s) => {
+      const msgs = [...s.messages];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].role === "assistant" && msgs[i].blocks) {
+          const blocks = msgs[i].blocks!.map((b) => {
+            if (b.type === "tool-call" && b.toolCallId === toolCallId) {
+              return { ...b, status: success ? "success" as const : "error" as const, result };
+            }
+            return b;
+          });
+          msgs[i] = { ...msgs[i], blocks };
+          break;
+        }
+      }
+      return { messages: msgs };
+    }),
   setStreaming: (streaming) => set({ isStreaming: streaming }),
   clearMessages: () => set({ messages: [] }),
 
   // Browser slice defaults
-  browserUrl: "about:blank",
-  browserTitle: "",
-  isLoading: false,
-  canGoBack: false,
-  canGoForward: false,
+  tabs: [],
+  activeTabId: null,
   screenshotDataUrl: null,
   highlightedElement: null,
-  updateBrowserState: (state) =>
+  addTab: (tab) =>
+    set((s) => ({ tabs: [...s.tabs, tab], activeTabId: tab.id })),
+  removeTab: (tabId) =>
+    set((s) => {
+      const remaining = s.tabs.filter((t) => t.id !== tabId);
+      let activeTabId = s.activeTabId;
+      if (activeTabId === tabId) {
+        activeTabId = remaining.length > 0 ? remaining[0].id : null;
+      }
+      return { tabs: remaining, activeTabId };
+    }),
+  setActiveTab: (tabId) => set({ activeTabId: tabId }),
+  updateTab: (tabId, patch) =>
     set((s) => ({
-      browserUrl: state.url ?? s.browserUrl,
-      browserTitle: state.title ?? s.browserTitle,
-      isLoading: state.isLoading ?? s.isLoading,
-      canGoBack: state.canGoBack ?? s.canGoBack,
-      canGoForward: state.canGoForward ?? s.canGoForward,
+      tabs: s.tabs.map((t) => (t.id === tabId ? { ...t, ...patch } : t)),
     })),
+  updateBrowserState: (state) =>
+    set((s) => {
+      const tabId = state.tabId || s.activeTabId;
+      if (!tabId) return {};
+      return {
+        tabs: s.tabs.map((t) =>
+          t.id === tabId
+            ? {
+                ...t,
+                url: state.url ?? t.url,
+                title: state.title ?? t.title,
+                isLoading: state.isLoading ?? t.isLoading,
+                canGoBack: state.canGoBack ?? t.canGoBack,
+                canGoForward: state.canGoForward ?? t.canGoForward,
+              }
+            : t
+        ),
+      };
+    }),
   setScreenshot: (dataUrl) => set({ screenshotDataUrl: dataUrl }),
   setHighlightedElement: (ref) => set({ highlightedElement: ref }),
 

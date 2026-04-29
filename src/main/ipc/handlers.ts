@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, webContents } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { Logger } from "../utils/logger";
 import { APP_VERSION } from "../../shared/constants";
@@ -125,8 +125,8 @@ export function registerIpcHandlers(): void {
 
   // ===== Browser =====
 
-  ipcMain.handle(IPC.BROWSER_ATTACH_WEBVIEW, async (_event, webContentsId: number) => {
-    logger.info(`Renderer reports webview webContents ${webContentsId}`);
+  ipcMain.handle(IPC.BROWSER_ATTACH_WEBVIEW, async (_event, payload: { tabId: string; webContentsId: number }) => {
+    logger.info(`Renderer reports webview webContents ${payload.webContentsId} for tab ${payload.tabId}`);
     try {
       if (!agentLoop) {
         agentLoop = new AgentLoop({
@@ -140,21 +140,40 @@ export function registerIpcHandlers(): void {
         });
         await agentLoop.initialize();
       }
-      // Fast-path attach using the renderer-provided ID
-      await agentLoop!.attachBrowser(webContentsId);
+      await agentLoop!.attachBrowser(payload.tabId, payload.webContentsId);
+
+      // Intercept window.open / target=_blank at the Chromium level
+      // so they always open as new tabs instead of native OS windows.
+      const wc = webContents.fromId(payload.webContentsId);
+      if (wc) {
+        wc.setWindowOpenHandler(({ url }) => {
+          if (url && url !== "about:blank" && !url.startsWith("devtools://")) {
+            const win = getMainWindow();
+            if (win) {
+              win.webContents.send(IPC.BROWSER_POPUP_OPEN, {
+                tabId: `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                url,
+                sourceTabId: payload.tabId,
+              });
+            }
+          }
+          return { action: "deny" };
+        });
+      }
     } catch (err: any) {
       logger.error(`Failed to attach CDP via IPC: ${err.message}`);
     }
   });
 
-  ipcMain.handle(IPC.BROWSER_NAVIGATE_TO, async (_event, url: string) => {
-    logger.info(`Navigate to: ${url}`);
+  ipcMain.handle(IPC.BROWSER_NAVIGATE_TO, async (_event, url: string, tabId?: string) => {
+    logger.info(`Navigate to: ${url}${tabId ? ` (tab: ${tabId})` : ""}`);
     if (agentLoop) {
       try {
-        const snapshot = await agentLoop.navigateBrowser(url);
+        const snapshot = await agentLoop.navigateBrowser(url, tabId);
         const win = getMainWindow();
         if (win) {
           win.webContents.send(IPC.BROWSER_STATE_CHANGED, {
+            tabId: tabId || "tab-initial",
             url: snapshot.pageState.url,
             title: snapshot.pageState.title,
             isLoading: false,
@@ -165,6 +184,29 @@ export function registerIpcHandlers(): void {
       } catch (err: any) {
         logger.error(`Navigation failed: ${err.message}`);
       }
+    }
+  });
+
+  // ===== Tab Management =====
+
+  // Tab creation is renderer-driven — the renderer creates the webview,
+  // then dom-ready fires which triggers attachWebview to create the TabSession.
+  // This handler is a no-op kept for forward compatibility.
+  ipcMain.handle(IPC.TAB_CREATE, async () => {
+    logger.info("Tab create requested (renderer-driven, no-op on main)");
+  });
+
+  ipcMain.handle(IPC.TAB_CLOSE, async (_event, tabId: string) => {
+    logger.info(`Tab close requested: ${tabId}`);
+    if (agentLoop) {
+      agentLoop.browserManager.closeTab(tabId);
+    }
+  });
+
+  ipcMain.handle(IPC.TAB_SWITCH, async (_event, tabId: string) => {
+    logger.info(`Tab switch requested: ${tabId}`);
+    if (agentLoop) {
+      agentLoop.browserManager.setActiveTab(tabId);
     }
   });
 

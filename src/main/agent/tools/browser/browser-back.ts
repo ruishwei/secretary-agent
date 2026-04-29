@@ -5,8 +5,9 @@ import type { BrowserManager } from "../../../browser/browser-manager";
 export function executeBrowserBack(browser: BrowserManager): ToolHandler {
   return {
     definition: BROWSER_BACK,
-    async execute(_args) {
-      const snapshot = await browser.back();
+    async execute(args) {
+      const tabId = args.tabId as string | undefined;
+      const snapshot = await browser.back(tabId);
       return {
         success: true,
         result: "Navigated back.",

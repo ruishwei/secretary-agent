@@ -7,13 +7,13 @@ export function executeBrowserFillForm(browser: BrowserManager): ToolHandler {
     definition: BROWSER_FILL_FORM,
     async execute(args) {
       const fields = args.fields as Record<string, string>;
-      const snapshot = await browser.getSnapshot(true);
+      const tabId = args.tabId as string | undefined;
+      const snapshot = await browser.getSnapshot(true, tabId);
 
       const filledFields: string[] = [];
       const skippedFields: string[] = [];
 
       for (const [label, value] of Object.entries(fields)) {
-        // Find the best-matching element by name or nearby label text
         const ref = findFieldRef(snapshot.nodes, label);
 
         if (!ref) {
@@ -29,27 +29,25 @@ export function executeBrowserFillForm(browser: BrowserManager): ToolHandler {
 
         try {
           if (node.role === "textbox" || node.role === "searchbox") {
-            await browser.typeByRef(ref, value);
+            await browser.typeByRef(ref, value, tabId);
             filledFields.push(`${label} = "${value}"`);
           } else if (node.role === "checkbox" || node.role === "radio" || node.role === "switch") {
             const shouldCheck = value === "true" || value === "checked" || value === "1" || value === "yes";
             const isChecked = node.checked === "true";
             if (shouldCheck !== isChecked) {
-              await browser.clickByRef(ref);
+              await browser.clickByRef(ref, tabId);
             }
             filledFields.push(`${label} = ${shouldCheck ? "checked" : "unchecked"}`);
           } else if (node.role === "combobox" || node.role === "listbox") {
-            await browser.clickByRef(ref);
-            // After expanding, try to find and click the option
-            const updatedSnapshot = await browser.getSnapshot(true);
+            await browser.clickByRef(ref, tabId);
+            const updatedSnapshot = await browser.getSnapshot(true, tabId);
             const optionRef = findFieldRef(updatedSnapshot.nodes, value);
             if (optionRef) {
-              await browser.clickByRef(optionRef);
+              await browser.clickByRef(optionRef, tabId);
             }
             filledFields.push(`${label} = "${value}"`);
           } else {
-            // Generic: try typing into it
-            await browser.typeByRef(ref, value);
+            await browser.typeByRef(ref, value, tabId);
             filledFields.push(`${label} = "${value}"`);
           }
         } catch (err: any) {
@@ -57,7 +55,7 @@ export function executeBrowserFillForm(browser: BrowserManager): ToolHandler {
         }
       }
 
-      const finalSnapshot = await browser.getSnapshot(true);
+      const finalSnapshot = await browser.getSnapshot(true, tabId);
 
       let resultMsg = `Filled ${filledFields.length}/${Object.keys(fields).length} fields.\n`;
       if (filledFields.length > 0) {
@@ -73,24 +71,18 @@ export function executeBrowserFillForm(browser: BrowserManager): ToolHandler {
   };
 }
 
-/**
- * Find the @ref ID of an element whose name matches the given label.
- * Case-insensitive, handles partial matches.
- */
 function findFieldRef(
   nodes: Map<string, import("../../../browser/accessibility-tree").AXNode>,
   label: string
 ): string | null {
   const labelLower = label.toLowerCase().trim();
 
-  // First pass: exact name match
   for (const [ref, node] of nodes) {
     if (node.name.toLowerCase().trim() === labelLower) {
       return ref;
     }
   }
 
-  // Second pass: name contains label or label contains name (for labels like "Title *")
   for (const [ref, node] of nodes) {
     const nameLower = node.name.toLowerCase().trim();
     if (nameLower && (nameLower.includes(labelLower) || labelLower.includes(nameLower))) {

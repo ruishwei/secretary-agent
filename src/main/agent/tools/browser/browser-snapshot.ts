@@ -7,7 +7,8 @@ export function executeBrowserSnapshot(browser: BrowserManager): ToolHandler {
     definition: BROWSER_SNAPSHOT,
     async execute(args) {
       const full = args.full === true;
-      const snapshot = await browser.getSnapshot(full);
+      const tabId = args.tabId as string | undefined;
+      const snapshot = await browser.getSnapshot(full, tabId);
       const elementCount = snapshot.nodes.size;
       return {
         success: true,

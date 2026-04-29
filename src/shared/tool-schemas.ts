@@ -15,6 +15,13 @@ export interface ToolDefinition {
 
 // ===== Browser Tools =====
 
+export const TAB_ID_PROPERTY = {
+  tabId: {
+    type: "string",
+    description: "Optional. The ID of the tab to operate on. Uses the active tab if not specified.",
+  },
+};
+
 export const BROWSER_NAVIGATE: ToolDefinition = {
   name: "browser_navigate",
   description:
@@ -26,6 +33,7 @@ export const BROWSER_NAVIGATE: ToolDefinition = {
         type: "string",
         description: "The full URL to navigate to.",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["url"],
   },
@@ -42,6 +50,7 @@ export const BROWSER_SNAPSHOT: ToolDefinition = {
         type: "boolean",
         description: "If true, return the full page snapshot. Default false (compact mode).",
       },
+      ...TAB_ID_PROPERTY,
     },
   },
 };
@@ -57,6 +66,7 @@ export const BROWSER_CLICK: ToolDefinition = {
         type: "string",
         description: "The @ref ID of the element to click (e.g., '@e5').",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["ref"],
   },
@@ -77,6 +87,7 @@ export const BROWSER_TYPE: ToolDefinition = {
         type: "string",
         description: "The text to type into the field.",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["ref", "text"],
   },
@@ -97,6 +108,7 @@ export const BROWSER_SCROLL: ToolDefinition = {
         type: "number",
         description: "Pixels to scroll. Default: one viewport height.",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["direction"],
   },
@@ -107,7 +119,7 @@ export const BROWSER_BACK: ToolDefinition = {
   description: "Navigate back to the previous page in browser history.",
   input_schema: {
     type: "object",
-    properties: {},
+    properties: { ...TAB_ID_PROPERTY },
   },
 };
 
@@ -122,6 +134,7 @@ export const BROWSER_PRESS: ToolDefinition = {
         type: "string",
         description: "Key name (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown').",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["key"],
   },
@@ -138,6 +151,7 @@ export const BROWSER_VISION: ToolDefinition = {
         type: "string",
         description: "What to look for or verify in the screenshot.",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["question"],
   },
@@ -154,6 +168,7 @@ export const BROWSER_CONSOLE: ToolDefinition = {
         type: "string",
         description: "Optional JavaScript expression to evaluate in the page context.",
       },
+      ...TAB_ID_PROPERTY,
     },
   },
 };
@@ -169,6 +184,7 @@ export const BROWSER_EXTRACT: ToolDefinition = {
         type: "string",
         description: "Description of what data to extract from the page.",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["what"],
   },
@@ -186,6 +202,7 @@ export const BROWSER_FILL_FORM: ToolDefinition = {
         description:
           "Key-value mapping of field labels/names to values. e.g., {'title': 'Weekly Report', 'recipient': 'All Staff'}",
       },
+      ...TAB_ID_PROPERTY,
     },
     required: ["fields"],
   },
@@ -206,6 +223,7 @@ export const BROWSER_WAIT: ToolDefinition = {
         type: "number",
         description: "Milliseconds to wait. Default: 3000.",
       },
+      ...TAB_ID_PROPERTY,
     },
   },
 };
@@ -216,7 +234,7 @@ export const BROWSER_GET_PAGE_STATE: ToolDefinition = {
     "Get a comprehensive summary of the current page: URL, title, all form field values, interactive elements, and a content summary. Useful when the user takes over and hands back.",
   input_schema: {
     type: "object",
-    properties: {},
+    properties: { ...TAB_ID_PROPERTY },
   },
 };
 
@@ -238,6 +256,64 @@ export const BROWSER_REQUEST_REVIEW: ToolDefinition = {
       },
     },
     required: ["reason", "reviewType"],
+  },
+};
+
+// ===== Tab Management Tools =====
+
+export const BROWSER_NEW_TAB: ToolDefinition = {
+  name: "browser_new_tab",
+  description: "Open a new browser tab. Optionally specify a URL to navigate the new tab to. The new tab becomes the active tab.",
+  input_schema: {
+    type: "object",
+    properties: {
+      url: {
+        type: "string",
+        description: "Optional URL to load in the new tab. Omit for a blank tab.",
+      },
+    },
+  },
+};
+
+export const BROWSER_CLOSE_TAB: ToolDefinition = {
+  name: "browser_close_tab",
+  description: "Close a browser tab by its ID. Cannot close the last remaining tab.",
+  input_schema: {
+    type: "object",
+    properties: {
+      tabId: {
+        type: "string",
+        description: "The tab ID to close.",
+      },
+    },
+    required: ["tabId"],
+  },
+};
+
+export const BROWSER_SWITCH_TAB: ToolDefinition = {
+  name: "browser_switch_tab",
+  description: "Switch the active browser tab by its tab ID, or by matching a substring against tab URLs and titles.",
+  input_schema: {
+    type: "object",
+    properties: {
+      tabId: {
+        type: "string",
+        description: "Exact tab ID to switch to.",
+      },
+      match: {
+        type: "string",
+        description: "Substring to match against tab URLs and titles (case-insensitive).",
+      },
+    },
+  },
+};
+
+export const BROWSER_LIST_TABS: ToolDefinition = {
+  name: "browser_list_tabs",
+  description: "List all open browser tabs with their IDs, URLs, and titles. The active tab is marked.",
+  input_schema: {
+    type: "object",
+    properties: {},
   },
 };
 
@@ -471,6 +547,10 @@ export const BROWSER_TOOLS: ToolDefinition[] = [
   BROWSER_WAIT,
   BROWSER_GET_PAGE_STATE,
   BROWSER_REQUEST_REVIEW,
+  BROWSER_NEW_TAB,
+  BROWSER_CLOSE_TAB,
+  BROWSER_SWITCH_TAB,
+  BROWSER_LIST_TABS,
 ];
 
 export const SKILL_TOOLS: ToolDefinition[] = [

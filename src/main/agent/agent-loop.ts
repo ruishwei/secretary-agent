@@ -3,7 +3,6 @@ import { LLMClient, type LLMConfig } from "./llm-client";
 import { ContextManager } from "./context-manager";
 import { ToolExecutor, type ToolResult } from "./tool-executor";
 import { buildSystemPrompt } from "./prompt-templates";
-import { CDPClient } from "../browser/cdp-client";
 import { BrowserManager } from "../browser/browser-manager";
 import { IPC } from "../../shared/ipc-channels";
 import type { AgentEvent } from "../../shared/types";
@@ -20,18 +19,25 @@ export class AgentLoop {
   private llm: LLMClient;
   private context: ContextManager;
   private toolExecutor: ToolExecutor;
-  private browserManager: BrowserManager;
-  private cdp: CDPClient;
+  browserManager: BrowserManager;
   private abortController: AbortController | null = null;
   private running = false;
   private turnCount = 0;
 
   constructor(config: AgentConfig) {
     this.llm = new LLMClient(config.llm);
-    this.cdp = new CDPClient();
-    this.browserManager = new BrowserManager(this.cdp);
+    this.browserManager = new BrowserManager();
     this.toolExecutor = new ToolExecutor(this.browserManager, this.llm);
     this.toolExecutor.registerBrowserTools();
+
+    // Wire renderer callback so tab tools notify the UI
+    this.toolExecutor.setRendererCallback((channel, data) => {
+      const win = BrowserWindow.getAllWindows()[0];
+      if (win && !win.isDestroyed()) {
+        win.webContents.send(channel as any, data);
+      }
+    });
+
     this.context = new ContextManager(config.llm.maxTokens);
   }
 
@@ -44,17 +50,17 @@ export class AgentLoop {
   }
 
   /**
-   * Attach CDP to a specific webview by its webContents ID.
+   * Attach CDP to a specific webview by its webContents ID and optional tab ID.
    */
-  async attachBrowser(webContentsId: number): Promise<void> {
-    await this.browserManager.attachToWebview(webContentsId);
+  async attachBrowser(tabId: string, webContentsId: number): Promise<void> {
+    await this.browserManager.attachToWebview(tabId, webContentsId);
   }
 
   /**
-   * Navigate the embedded browser to a URL and return a snapshot.
+   * Navigate the embedded browser to a URL on the active tab (or specified tab) and return a snapshot.
    */
-  async navigateBrowser(url: string) {
-    return this.browserManager.navigate(url);
+  async navigateBrowser(url: string, tabId?: string) {
+    return this.browserManager.navigate(url, tabId);
   }
 
   /**
@@ -84,9 +90,11 @@ export class AgentLoop {
 
     // Build system prompt
     const pageState = this.browserManager.getPageState();
+    const allTabs = this.browserManager.getAllTabs();
     const systemPrompt = buildSystemPrompt({
       mode: "ai",
       currentUrl: pageState.url,
+      allTabs,
       // Memory and skills will be populated in Phase 5/6
     });
 
@@ -132,6 +140,8 @@ export class AgentLoop {
           mode: "ai",
           currentUrl: this.browserManager.getPageState().url,
           pageSnapshot,
+          allTabs: this.browserManager.getAllTabs(),
+          activeTabId: this.browserManager.getActiveSession()?.tabId,
         });
         this.context.setSystemPrompt(currentPrompt);
 
@@ -298,6 +308,7 @@ export class AgentLoop {
   async *continueAfterHandBack(): AsyncGenerator<AgentEvent> {
     // Capture current page state after user's manual operations
     const pageState = this.browserManager.getPageState();
+    const allTabs = this.browserManager.getAllTabs();
     let snapshot: string | undefined;
     try {
       snapshot = (await this.browserManager.getSnapshot(true)).text;
@@ -307,6 +318,7 @@ export class AgentLoop {
 URL: ${pageState.url}
 Title: ${pageState.title}
 ${snapshot ? `Page content:\n${snapshot}` : "(browser state unavailable)"}
+Open tabs: ${allTabs.map((t) => `${t.isActive ? ">" : ""}${t.tabId}: ${t.url}`).join(", ")}
 
 Please review what the user did and continue with the task.`;
 
@@ -344,6 +356,8 @@ Please review what the user did and continue with the task.`;
           mode: "ai",
           currentUrl: this.browserManager.getPageState().url,
           pageSnapshot,
+          allTabs: this.browserManager.getAllTabs(),
+          activeTabId: this.browserManager.getActiveSession()?.tabId,
         });
         this.context.setSystemPrompt(currentPrompt);
 

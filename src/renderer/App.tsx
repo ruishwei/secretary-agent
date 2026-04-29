@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel/ChatPanel";
 import { BrowserView } from "./components/BrowserView/BrowserView";
+import { TabBar } from "./components/BrowserView/TabBar";
+import { AddressBar } from "./components/BrowserView/AddressBar";
 import { ControlBar } from "./components/ControlBar/ControlBar";
 import { AgentThinking } from "./components/AgentThinking/AgentThinking";
 import { ReviewDialog } from "./components/ReviewDialog/ReviewDialog";
@@ -37,9 +39,16 @@ export default function App() {
           <ChatPanel />
         </div>
 
-        {/* Right Panel — Embedded Browser */}
-        <div className="flex-1 relative">
-          <BrowserView />
+        {/* Right Panel — Multi-Tab Browser */}
+        <div className="flex-1 flex flex-col">
+          {/* Tab Bar */}
+          <TabBar />
+          {/* Address Bar */}
+          <AddressBar />
+          {/* Webview Area */}
+          <div className="flex-1 relative">
+            <BrowserView />
+          </div>
         </div>
       </div>
 

@@ -7,15 +7,14 @@ export function executeBrowserConsole(browser: BrowserManager): ToolHandler {
     definition: BROWSER_CONSOLE,
     async execute(args) {
       const expression = args.expression as string | undefined;
+      const tabId = args.tabId as string | undefined;
 
       if (expression) {
-        // Evaluate JS in page context (requires review for sensitive operations)
-        const result = await browser.evaluateJs(expression);
+        const result = await browser.evaluateJs(expression, tabId);
         return { success: true, result: `Eval result: ${result}` };
       }
 
-      // Return console messages
-      const messages = browser.getConsoleMessages();
+      const messages = browser.getConsoleMessages(tabId);
       if (messages.length === 0) {
         return { success: true, result: "No console messages captured." };
       }

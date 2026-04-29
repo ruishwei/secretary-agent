@@ -12,3 +12,7 @@ export { executeBrowserVision } from "./browser-vision";
 export { executeBrowserExtract } from "./browser-extract";
 export { executeBrowserFillForm } from "./browser-fill-form";
 export { executeBrowserRequestReview } from "./browser-request-review";
+export { executeBrowserNewTab } from "./browser-new-tab";
+export { executeBrowserCloseTab } from "./browser-close-tab";
+export { executeBrowserSwitchTab } from "./browser-switch-tab";
+export { executeBrowserListTabs } from "./browser-list-tabs";

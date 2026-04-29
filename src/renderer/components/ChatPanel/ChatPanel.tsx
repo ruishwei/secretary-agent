@@ -9,45 +9,63 @@ export function ChatPanel() {
   const isStreaming = useStore((s) => s.isStreaming);
   const addMessage = useStore((s) => s.addMessage);
   const updateLastAssistantMessage = useStore((s) => s.updateLastAssistantMessage);
+  const appendBlockToLastAssistant = useStore((s) => s.appendBlockToLastAssistant);
+  const updateToolCallBlock = useStore((s) => s.updateToolCallBlock);
   const setStreaming = useStore((s) => s.setStreaming);
   const addAgentAction = useStore((s) => s.addAgentAction);
   const updateAgentActionResult = useStore((s) => s.updateAgentActionResult);
-  const setAgentThinking = useStore((s) => s.setAgentThinking);
   const setReviewRequest = useStore((s) => s.setReviewRequest);
   const clearAgentState = useStore((s) => s.clearAgentState);
 
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom when new messages or blocks arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Listen for agent events
+  // Listen for agent events and stream them into the assistant message
   useEffect(() => {
     if (!window.electronAPI?.onAgentEvent) return;
     const unsubscribe = window.electronAPI.onAgentEvent((event: any) => {
       switch (event.type) {
         case "thinking":
-          setAgentThinking(event.plan ?? null);
+          // Show thinking as a collapsible block inside the assistant bubble
+          appendBlockToLastAssistant({
+            type: "thinking",
+            thinking: event.plan ?? "",
+          });
           break;
+
         case "tool-start":
+          // Show tool call as a card inside the assistant bubble
           addAgentAction({
             toolCallId: event.toolCallId,
             tool: event.tool,
             args: event.args,
             status: "running",
           });
+          appendBlockToLastAssistant({
+            type: "tool-call",
+            toolCallId: event.toolCallId,
+            tool: event.tool,
+            args: event.args,
+            status: "running",
+          });
           break;
+
         case "tool-result":
+          // Update the tool call card with the result
           updateAgentActionResult(event.toolCallId, event.result, event.success);
+          updateToolCallBlock(event.toolCallId, event.result, event.success);
           break;
+
         case "response":
+          // Streaming text response — continuously update the content
           updateLastAssistantMessage(event.text);
-          setStreaming(false);
-          clearAgentState();
           break;
+
         case "review-required":
           setReviewRequest({
             reviewId: event.reviewId,
@@ -56,20 +74,32 @@ export function ChatPanel() {
             description: event.description,
             content: event.content,
           });
+          setStreaming(false);
           break;
-        case "error":
-          updateLastAssistantMessage(`Error: ${event.message}`);
+
+        case "done":
           setStreaming(false);
           clearAgentState();
           break;
-        case "done":
+
+        case "error":
+          updateLastAssistantMessage(`**Error:** ${event.message}`);
           setStreaming(false);
           clearAgentState();
           break;
       }
     });
     return unsubscribe;
-  }, [addAgentAction, updateAgentActionResult, setAgentThinking, setReviewRequest, setStreaming, updateLastAssistantMessage, clearAgentState]);
+  }, [
+    addAgentAction,
+    updateAgentActionResult,
+    appendBlockToLastAssistant,
+    updateToolCallBlock,
+    updateLastAssistantMessage,
+    setReviewRequest,
+    setStreaming,
+    clearAgentState,
+  ]);
 
   const handleSend = useCallback(
     async (text: string) => {
@@ -88,6 +118,7 @@ export function ChatPanel() {
         role: "assistant",
         content: "",
         timestamp: Date.now(),
+        blocks: [],
       };
       addMessage(assistantMsg);
       setStreaming(true);
@@ -99,7 +130,7 @@ export function ChatPanel() {
           await window.electronAPI.sendMessage({ text });
         }
       } catch (err) {
-        updateLastAssistantMessage(`Failed to send message: ${err}`);
+        updateLastAssistantMessage(`**Error:** Failed to send message: ${err}`);
         setStreaming(false);
         clearAgentState();
       }
@@ -131,10 +162,10 @@ export function ChatPanel() {
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
+        {/* Keep the streaming indicator minimal — the assistant bubble handles its own pulse */}
         {isStreaming && (
-          <div className="flex items-center space-x-2 text-gray-500 text-sm px-2">
-            <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-            <span>Agent is thinking...</span>
+          <div className="text-center text-xs text-gray-600">
+            {messages[messages.length - 1]?.content ? "..." : ""}
           </div>
         )}
         <div ref={messagesEndRef} />

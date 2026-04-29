@@ -27,3 +27,4 @@ export const CONTEXT_COMPACTION_THRESHOLD = 0.8;
 
 export const CDP_TIMEOUT_MS = 10000;
 export const DEFAULT_WAIT_TIMEOUT_MS = 3000;
+export const MAX_TABS = 20;

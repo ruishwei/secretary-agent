@@ -8,10 +8,11 @@ export function executeBrowserType(browser: BrowserManager): ToolHandler {
     async execute(args) {
       const ref = args.ref as string;
       const text = args.text as string;
+      const tabId = args.tabId as string | undefined;
       if (!ref) return { success: false, result: "", error: "ref is required" };
       if (!text && text !== "") return { success: false, result: "", error: "text is required" };
 
-      const snapshot = await browser.typeByRef(ref, text);
+      const snapshot = await browser.typeByRef(ref, text, tabId);
       return {
         success: true,
         result: `Typed "${text}" into ${ref}.`,

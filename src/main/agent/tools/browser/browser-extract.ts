@@ -8,7 +8,8 @@ export function executeBrowserExtract(browser: BrowserManager, llm: LLMClient): 
     definition: BROWSER_EXTRACT,
     async execute(args) {
       const what = args.what as string;
-      const snapshot = await browser.getSnapshot(true);
+      const tabId = args.tabId as string | undefined;
+      const snapshot = await browser.getSnapshot(true, tabId);
 
       const systemPrompt = `You are a precise data extraction tool. Extract the requested information from the page content provided. Return ONLY valid JSON — no markdown, no explanation, no code fences. If the data is not found, return {"error": "not found"}. Use the exact format the user requests.`;
 

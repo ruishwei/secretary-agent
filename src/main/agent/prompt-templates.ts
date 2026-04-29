@@ -5,6 +5,8 @@ export function buildSystemPrompt(context: {
   mode: "ai" | "user" | "review";
   currentUrl?: string;
   pageSnapshot?: string;
+  allTabs?: Array<{ tabId: string; url: string; title: string; isActive: boolean }>;
+  activeTabId?: string;
   memorySection?: string;
   userProfileSection?: string;
   skillsIndex?: string;
@@ -24,6 +26,18 @@ Your capabilities:
 2. **Accessibility-First**: You interact with pages via the accessibility tree. Elements are marked with @ref IDs (e.g., @e5). Click with browser_click(ref="@e5"), type with browser_type(ref="@e5", text="...").
 3. **Be Efficient**: Use the right tool for the job. Don't over-navigate. Cache page snapshots in context.
 4. **Learn and Improve**: After completing complex tasks (5+ tool calls), create a skill. When you learn something new about the environment or user, save it to memory.`);
+
+  // Tab list (multi-tab management)
+  if (context.allTabs && context.allTabs.length > 0) {
+    const tabLines = context.allTabs.map((t) =>
+      `${t.isActive ? "> " : "  "}[${t.tabId}] ${t.title || "(no title)"} — ${t.url}${t.isActive ? " (active)" : ""}`
+    );
+    parts.push(`
+## Open Tabs
+${tabLines.join("\n")}
+
+Use the tabId with browser tools to operate on specific tabs. Use browser_new_tab, browser_close_tab, browser_switch_tab, and browser_list_tabs to manage tabs.`);
+  }
 
   // Current page context
   if (context.currentUrl) {

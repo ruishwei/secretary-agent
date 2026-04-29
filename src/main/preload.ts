@@ -10,6 +10,7 @@ import type {
   VoiceTranscribeRequest,
   VoiceResult,
   AppSettings,
+  TabInfo,
 } from "../shared/types";
 
 /**
@@ -43,11 +44,39 @@ const electronAPI = {
     return () => ipcRenderer.removeListener(IPC.BROWSER_SCREENSHOT, handler);
   },
 
-  attachWebview: (webContentsId: number): Promise<void> =>
-    ipcRenderer.invoke(IPC.BROWSER_ATTACH_WEBVIEW, webContentsId),
+  attachWebview: (tabId: string, webContentsId: number): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_ATTACH_WEBVIEW, { tabId, webContentsId }),
 
-  navigateTo: (url: string): Promise<void> =>
-    ipcRenderer.invoke(IPC.BROWSER_NAVIGATE_TO, url),
+  navigateTo: (url: string, tabId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_NAVIGATE_TO, url, tabId),
+
+  // Tab management
+  createTab: (url?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.TAB_CREATE, url),
+
+  closeTab: (tabId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.TAB_CLOSE, tabId),
+
+  switchTab: (tabId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.TAB_SWITCH, tabId),
+
+  onTabListChanged: (callback: (data: { tabs: TabInfo[]; activeTabId: string | null }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { tabs: TabInfo[]; activeTabId: string | null }) => callback(data);
+    ipcRenderer.on(IPC.TAB_LIST_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.TAB_LIST_CHANGED, handler);
+  },
+
+  onTabStateChanged: (callback: (state: BrowserState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: BrowserState) => callback(data);
+    ipcRenderer.on(IPC.TAB_STATE_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.TAB_STATE_CHANGED, handler);
+  },
+
+  onPopupOpen: (callback: (data: { tabId: string; url: string; sourceTabId: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { tabId: string; url: string; sourceTabId: string }) => callback(data);
+    ipcRenderer.on(IPC.BROWSER_POPUP_OPEN, handler);
+    return () => ipcRenderer.removeListener(IPC.BROWSER_POPUP_OPEN, handler);
+  },
 
   // Session Control
   takeOver: (): Promise<void> => ipcRenderer.invoke(IPC.TAKE_OVER),

@@ -13,4 +13,8 @@ export {
   executeBrowserExtract,
   executeBrowserFillForm,
   executeBrowserRequestReview,
+  executeBrowserNewTab,
+  executeBrowserCloseTab,
+  executeBrowserSwitchTab,
+  executeBrowserListTabs,
 } from "./browser/index";

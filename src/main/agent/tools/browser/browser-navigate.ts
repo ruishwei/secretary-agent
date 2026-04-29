@@ -7,9 +7,10 @@ export function executeBrowserNavigate(browser: BrowserManager): ToolHandler {
     definition: BROWSER_NAVIGATE,
     async execute(args) {
       const url = args.url as string;
+      const tabId = args.tabId as string | undefined;
       if (!url) return { success: false, result: "", error: "url is required" };
 
-      const { pageState, snapshot } = await browser.navigate(url);
+      const { pageState, snapshot } = await browser.navigate(url, tabId);
       return {
         success: true,
         result: `Navigated to ${pageState.url}. Title: ${pageState.title}`,

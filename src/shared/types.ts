@@ -15,12 +15,69 @@ export interface SendMessageResponse {
   reason?: string;
 }
 
+// ===== Tab Types =====
+
+export interface Tab {
+  id: string;
+  url: string;
+  title: string;
+  favicon?: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  webContentsId: number | null;
+}
+
+export interface TabInfo {
+  tabId: string;
+  url: string;
+  title: string;
+  isActive: boolean;
+}
+
+// ===== Chat Messages =====
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: number;
   toolCalls?: ToolCallRecord[];
+  blocks?: ChatMessageBlock[];
+}
+
+export type ChatMessageBlock =
+  | TextBlock
+  | ThinkingBlock
+  | ToolCallBlock
+  | ToolResultBlock;
+
+export interface TextBlock {
+  type: "text";
+  text: string;
+}
+
+export interface ThinkingBlock {
+  type: "thinking";
+  thinking: string;
+}
+
+export interface ToolCallBlock {
+  type: "tool-call";
+  toolCallId: string;
+  tool: string;
+  args: Record<string, unknown>;
+  status: "running" | "success" | "error";
+  result?: string;
+  error?: string;
+}
+
+export interface ToolResultBlock {
+  type: "tool-result";
+  toolCallId: string;
+  result: string;
+  success: boolean;
+  error?: string;
 }
 
 export interface ToolCallRecord {
@@ -95,6 +152,7 @@ export interface AgentDoneEvent {
 // ===== Browser State =====
 
 export interface BrowserState {
+  tabId: string;
   url: string;
   title: string;
   isLoading: boolean;

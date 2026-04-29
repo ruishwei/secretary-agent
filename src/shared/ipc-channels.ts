@@ -13,6 +13,14 @@ export const IPC = {
   BROWSER_SCREENSHOT: "browser:screenshot",
   BROWSER_NAVIGATE_TO: "browser:navigate-to",
 
+  // Tab management
+  TAB_CREATE: "browser:tab-create",
+  TAB_CLOSE: "browser:tab-close",
+  TAB_SWITCH: "browser:tab-switch",
+  TAB_LIST_CHANGED: "browser:tab-list-changed",
+  TAB_STATE_CHANGED: "browser:tab-state-changed",
+  BROWSER_POPUP_OPEN: "browser:popup-open",
+
   // Session Control
   TAKE_OVER: "session:take-over",
   HAND_BACK: "session:hand-back",

@@ -7,10 +7,11 @@ export function executeBrowserPress(browser: BrowserManager): ToolHandler {
     definition: BROWSER_PRESS,
     async execute(args) {
       const key = args.key as string;
+      const tabId = args.tabId as string | undefined;
       if (!key) return { success: false, result: "", error: "key is required" };
 
-      await browser.pressKey(key);
-      const snapshot = await browser.getSnapshot();
+      await browser.pressKey(key, tabId);
+      const snapshot = await browser.getSnapshot(false, tabId);
       return {
         success: true,
         result: `Pressed ${key}.`,

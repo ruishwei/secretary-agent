@@ -16,6 +16,10 @@ import { executeBrowserVision } from "./tools/browser/browser-vision";
 import { executeBrowserExtract } from "./tools/browser/browser-extract";
 import { executeBrowserFillForm } from "./tools/browser/browser-fill-form";
 import { executeBrowserRequestReview } from "./tools/browser/browser-request-review";
+import { executeBrowserNewTab } from "./tools/browser/browser-new-tab";
+import { executeBrowserCloseTab } from "./tools/browser/browser-close-tab";
+import { executeBrowserSwitchTab } from "./tools/browser/browser-switch-tab";
+import { executeBrowserListTabs } from "./tools/browser/browser-list-tabs";
 
 const logger = new Logger("ToolExec");
 
@@ -39,10 +43,15 @@ export class ToolExecutor {
   private llmClient: LLMClient | null = null;
   private abortSignal: AbortSignal | null = null;
   private reviewCallback: ((reviewType: string, reason: string, content: unknown) => Promise<{ approved: boolean; modifications?: string }>) | null = null;
+  private rendererCallback: ((channel: string, data: unknown) => void) | null = null;
 
   constructor(browserManager: BrowserManager, llmClient?: LLMClient) {
     this.browserManager = browserManager;
     this.llmClient = llmClient || null;
+  }
+
+  setRendererCallback(cb: (channel: string, data: unknown) => void) {
+    this.rendererCallback = cb;
   }
 
   /**
@@ -73,6 +82,20 @@ export class ToolExecutor {
       executeBrowserExtract(browser, llm!),
       executeBrowserFillForm(browser),
       executeBrowserRequestReview(),
+      executeBrowserNewTab(browser, (tabId, url) => {
+        if (this.rendererCallback) {
+          this.rendererCallback("browser:tab-list-changed", {
+            action: "tab-created",
+            tabId,
+            url,
+            tabs: browser.getAllTabs(),
+            activeTabId: browser.getActiveSession()?.tabId ?? null,
+          });
+        }
+      }),
+      executeBrowserCloseTab(browser),
+      executeBrowserSwitchTab(browser),
+      executeBrowserListTabs(browser),
     ];
     for (const tool of tools) {
       this.register(tool);

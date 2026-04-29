@@ -8,8 +8,9 @@ export function executeBrowserScroll(browser: BrowserManager): ToolHandler {
     async execute(args) {
       const direction = (args.direction as string) || "down";
       const amount = args.amount as number | undefined;
-      await browser.scroll(direction as "up" | "down", amount);
-      const snapshot = await browser.getSnapshot();
+      const tabId = args.tabId as string | undefined;
+      await browser.scroll(direction as "up" | "down", amount, tabId);
+      const snapshot = await browser.getSnapshot(false, tabId);
       return {
         success: true,
         result: `Scrolled ${direction}${amount ? ` ${amount}px` : ""}.`,

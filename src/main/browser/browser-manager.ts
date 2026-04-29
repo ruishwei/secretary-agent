@@ -13,105 +13,55 @@ export interface PageState {
   canGoForward: boolean;
 }
 
-export class BrowserManager {
-  private cdp: CDPClient;
-  private axTree: AccessibilityTree;
-  private currentUrl = "about:blank";
-  private currentTitle = "";
-  private currentSnapshot: AXSnapshot | null = null;
-  private cleanupFns: Array<() => void> = [];
-  private webviewWcId: number | null = null;
+// ===== TabSession — per-tab CDP connection and page state =====
+
+export class TabSession {
+  readonly tabId: string;
+  readonly cdp: CDPClient;
+  readonly axTree: AccessibilityTree;
+  url = "about:blank";
+  title = "";
+  snapshot: AXSnapshot | null = null;
+  webContentsId: number | null = null;
+  isLoading = false;
+  canGoBack = false;
+  canGoForward = false;
   private readyPromise: Promise<void>;
   private readyResolve: (() => void) | null = null;
+  private cleanupFns: Array<() => void> = [];
+  private attached = false;
 
-  constructor(cdp: CDPClient) {
-    this.cdp = cdp;
-    this.axTree = new AccessibilityTree(cdp);
+  constructor(tabId: string) {
+    this.tabId = tabId;
+    this.cdp = new CDPClient();
+    this.axTree = new AccessibilityTree(this.cdp);
     this.readyPromise = new Promise((resolve) => {
       this.readyResolve = resolve;
     });
   }
 
-  /**
-   * Wait until the browser is ready (CDP attached to webview).
-   */
-  async waitUntilReady(timeoutMs = 15000): Promise<void> {
+  waitUntilReady(timeoutMs = 15000): Promise<void> {
     const timeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error("Timed out waiting for browser to be ready")), timeoutMs)
+      setTimeout(() => reject(new Error(`Tab ${this.tabId} timed out waiting for CDP`)), timeoutMs)
     );
-    await Promise.race([this.readyPromise, timeout]);
+    return Promise.race([this.readyPromise, timeout]);
   }
 
-  /**
-   * Initialize: find the webview's webContents and attach CDP.
-   * Polls until the webview appears (up to 30s), then attaches CDP.
-   */
-  async initialize(): Promise<void> {
-    logger.info("BrowserManager: looking for webview...");
-    const mainWin = BrowserWindow.getAllWindows()[0];
-    if (!mainWin) {
-      logger.info("BrowserManager: no window yet, will retry on first use");
-      return;
-    }
-
-    // Poll for webview webContents — it may not exist yet during app startup
-    const maxAttempts = 30;
-    for (let i = 0; i < maxAttempts; i++) {
-      const allWCs = webContents.getAllWebContents();
-      const webviewWc = allWCs.find((wc) => {
-        // A webview's webContents has hostWebContents pointing to the embedder
-        return (wc as any).hostWebContents?.id === mainWin.webContents.id;
-      });
-
-      if (webviewWc) {
-        await this.doAttach(webviewWc);
-        logger.info(`BrowserManager: found and attached to webview (webContents ${webviewWc.id})`);
-        return;
-      }
-
-      await this.delay(1000);
-    }
-
-    logger.error("BrowserManager: webview not found after 30s");
-  }
-
-  /**
-   * Attach CDP to a specific webview (also used by renderer IPC as fallback).
-   */
-  async attachToWebview(webContentsId: number): Promise<void> {
-    // If already attached to the same webview, skip
-    if (this.webviewWcId === webContentsId && this.cdp.isAttached()) {
-      return;
-    }
-
-    if (this.cdp.isAttached()) {
-      this.cdp.detach();
-    }
-
-    const wc = webContents.fromId(webContentsId);
-    if (!wc) {
-      throw new Error(`No webContents found for ID ${webContentsId}`);
-    }
-
-    await this.doAttach(wc);
-    logger.info(`CDP attached to webview webContents ${webContentsId}`);
-  }
-
-  private async doAttach(wc: Electron.WebContents): Promise<void> {
-    this.webviewWcId = wc.id;
-    this.cdp.attach(wc);
+  async attachToWebview(wc: Electron.WebContents): Promise<void> {
+    if (this.attached) return;
+    this.webContentsId = wc.id;
+    await this.cdp.attach(wc);
     await this.cdp.enableDomains();
+    this.attached = true;
 
-    // Listen for frame navigations
     const unsub = this.cdp.onFrameNavigated((url) => {
       if (url && !url.startsWith("devtools://")) {
-        this.currentUrl = url;
-        logger.info(`Navigated to: ${url}`);
+        this.url = url;
+        logger.info(`[${this.tabId}] Navigated to: ${url}`);
       }
     });
     this.cleanupFns.push(unsub);
 
-    // Signal that the browser is ready
     if (this.readyResolve) {
       this.readyResolve();
       this.readyResolve = null;
@@ -119,246 +69,133 @@ export class BrowserManager {
   }
 
   isReady(): boolean {
-    return this.cdp.isAttached();
+    return this.attached && this.cdp.isAttached();
   }
 
-  /**
-   * Navigate to a URL and return the page snapshot.
-   */
   async navigate(url: string): Promise<{ pageState: PageState; snapshot: AXSnapshot }> {
-    // Validate URL
     let normalizedUrl = url;
     if (!url.startsWith("http://") && !url.startsWith("https://")) {
       normalizedUrl = `https://${url}`;
     }
-
-    // Block dangerous URLs
     if (normalizedUrl.startsWith("file://") || normalizedUrl.startsWith("javascript:")) {
       throw new Error(`Blocked URL: ${normalizedUrl}`);
     }
 
-    logger.info(`Navigating to: ${normalizedUrl}`);
-
-    // Navigate via CDP
     await this.cdp.send("Page.navigate", { url: normalizedUrl });
-
-    // Wait for page to load
     await this.waitForLoad();
 
-    // Get page title
-    const titleResult = await this.cdp.send<string>("Runtime.evaluate", {
+    const titleResult = await this.cdp.send<any>("Runtime.evaluate", {
       expression: "document.title",
       returnByValue: true,
     });
 
-    this.currentUrl = normalizedUrl;
-    this.currentTitle = (titleResult as any)?.result?.value || "";
+    this.url = normalizedUrl;
+    this.title = titleResult?.result?.value || "";
+    this.isLoading = false;
 
-    // Get snapshot
     const snapshot = await this.axTree.snapshot();
-    this.currentSnapshot = snapshot;
+    this.snapshot = snapshot;
 
-    return {
-      pageState: this.getPageState(),
-      snapshot,
-    };
+    return { pageState: this.getPageState(), snapshot };
   }
 
-  /**
-   * Get current page state (URL, title, loading status).
-   */
   getPageState(): PageState {
     return {
-      url: this.currentUrl,
-      title: this.currentTitle,
-      isLoading: false,
-      canGoBack: false,
-      canGoForward: false,
+      url: this.url,
+      title: this.title,
+      isLoading: this.isLoading,
+      canGoBack: this.canGoBack,
+      canGoForward: this.canGoForward,
     };
   }
 
-  /**
-   * Get a fresh snapshot of the current page.
-   */
   async getSnapshot(full = false): Promise<AXSnapshot> {
     const snapshot = await this.axTree.snapshot(full);
-    this.currentSnapshot = snapshot;
+    this.snapshot = snapshot;
     return snapshot;
   }
 
-  /**
-   * Click an element by @ref ID.
-   */
   async clickByRef(ref: string): Promise<AXSnapshot> {
-    if (!this.currentSnapshot) {
+    if (!this.snapshot) {
       throw new Error("No page snapshot available. Navigate first.");
     }
-
-    const backendNodeId = this.axTree.resolveRef(ref, this.currentSnapshot.nodes);
+    const backendNodeId = this.axTree.resolveRef(ref, this.snapshot.nodes);
     if (!backendNodeId) {
-      throw new Error(`Element ${ref} not found in the current snapshot. Try refreshing with browser_snapshot.`);
+      throw new Error(`Element ${ref} not found. Try refreshing with browser_snapshot.`);
     }
-
-    // Get the DOM node for the backendNodeId
     try {
-      // Use DOM.resolveNode to get objectId, then get box model for coordinates
-      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", {
-        backendNodeId,
-      });
-
+      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", { backendNodeId });
       const objectId = resolveResult?.object?.objectId;
-      if (!objectId) {
-        throw new Error(`Could not resolve ${ref} to a DOM node`);
-      }
+      if (!objectId) throw new Error(`Could not resolve ${ref} to a DOM node`);
 
-      // Get box model for coordinates
-      const boxModel = await this.cdp.send<any>("DOM.getBoxModel", {
-        objectId,
-      });
-
+      const boxModel = await this.cdp.send<any>("DOM.getBoxModel", { objectId });
       if (boxModel?.model?.content) {
         const quad = boxModel.model.content;
         const x = (quad[0] + quad[4]) / 2;
         const y = (quad[1] + quad[5]) / 2;
-
-        // Simulate click via mouse events
-        await this.cdp.send("Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          x,
-          y,
-          button: "left",
-          clickCount: 1,
-        });
-        await this.cdp.send("Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          x,
-          y,
-          button: "left",
-          clickCount: 1,
-        });
+        await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+        await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
       } else {
-        // Fallback: try focusing and pressing Enter
         await this.cdp.send("DOM.focus", { backendNodeId });
-        await this.cdp.send("Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key: "Enter",
-          code: "Enter",
-        });
+        await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" });
       }
     } catch (err) {
       throw new Error(`Failed to click ${ref}: ${err}`);
     }
-
-    // Wait a bit for the page to react
     await this.delay(500);
-
-    // Return fresh snapshot
     return this.getSnapshot();
   }
 
-  /**
-   * Type text into an input element by @ref ID.
-   */
   async typeByRef(ref: string, text: string): Promise<AXSnapshot> {
-    if (!this.currentSnapshot) {
+    if (!this.snapshot) {
       throw new Error("No page snapshot available. Navigate first.");
     }
-
-    const backendNodeId = this.axTree.resolveRef(ref, this.currentSnapshot.nodes);
-    if (!backendNodeId) {
-      throw new Error(`Element ${ref} not found in the current snapshot.`);
-    }
+    const backendNodeId = this.axTree.resolveRef(ref, this.snapshot.nodes);
+    if (!backendNodeId) throw new Error(`Element ${ref} not found.`);
 
     try {
-      // Focus the element
       await this.cdp.send("DOM.focus", { backendNodeId });
       await this.delay(100);
-
-      // Clear the field: select all and delete
-      await this.cdp.send("Input.dispatchKeyEvent", {
-        type: "keyDown",
-        key: "a",
-        code: "KeyA",
-        modifiers: 2, // Ctrl
-      });
-      await this.cdp.send("Input.dispatchKeyEvent", {
-        type: "keyUp",
-        key: "a",
-        code: "KeyA",
-        modifiers: 2,
-      });
-
-      // Type the text character by character
+      await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: 2 });
+      await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: 2 });
       for (const char of text) {
-        await this.cdp.send("Input.dispatchKeyEvent", {
-          type: "keyDown",
-          key: char,
-          text: char,
-        });
-        await this.cdp.send("Input.dispatchKeyEvent", {
-          type: "keyUp",
-          key: char,
-        });
+        await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: char, text: char });
+        await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: char });
       }
     } catch (err) {
       throw new Error(`Failed to type into ${ref}: ${err}`);
     }
-
     await this.delay(300);
     return this.getSnapshot();
   }
 
-  /**
-   * Scroll the page.
-   */
   async scroll(direction: "up" | "down", amount?: number): Promise<void> {
     const pixels = amount || 600;
     const deltaY = direction === "down" ? pixels : -pixels;
-
-    await this.cdp.send("Input.dispatchMouseEvent", {
-      type: "mouseWheel",
-      x: 400,
-      y: 300,
-      deltaX: 0,
-      deltaY,
-    });
+    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 400, y: 300, deltaX: 0, deltaY });
   }
 
-  /**
-   * Navigate back.
-   */
   async back(): Promise<AXSnapshot> {
     await this.cdp.send("Page.navigateToHistoryEntry", { direction: "back" });
     await this.waitForLoad();
     return this.getSnapshot();
   }
 
-  /**
-   * Press a keyboard key.
-   */
-  async pressKey(key: string): Promise<void> {
-    await this.cdp.send("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      key,
-      code: key,
-    });
-    await this.cdp.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key,
-      code: key,
-    });
+  async forward(): Promise<AXSnapshot> {
+    await this.cdp.send("Page.navigateToHistoryEntry", { direction: "forward" });
+    await this.waitForLoad();
+    return this.getSnapshot();
   }
 
-  /**
-   * Get console messages.
-   */
+  async pressKey(key: string): Promise<void> {
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key, code: key });
+    await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key, code: key });
+  }
+
   getConsoleMessages(): string[] {
     return this.cdp.getConsoleMessages();
   }
 
-  /**
-   * Execute JavaScript in the page.
-   */
   async evaluateJs(expression: string): Promise<string> {
     const result = await this.cdp.send<any>("Runtime.evaluate", {
       expression,
@@ -371,25 +208,261 @@ export class BrowserManager {
     return JSON.stringify(result?.result?.value ?? null);
   }
 
-  /**
-   * Capture a screenshot as base64 data URL.
-   */
   async screenshot(): Promise<string> {
-    const result = await this.cdp.send<string>("Page.captureScreenshot", {
-      format: "png",
-    });
+    const result = await this.cdp.send<string>("Page.captureScreenshot", { format: "png" });
     return `data:image/png;base64,${result}`;
+  }
+
+  async refresh(): Promise<void> {
+    await this.cdp.send("Page.reload");
+    await this.waitForLoad();
   }
 
   cleanup() {
     this.cleanupFns.forEach((fn) => fn());
     this.cleanupFns = [];
     this.cdp.detach();
+    this.attached = false;
   }
 
-  private async waitForLoad(timeoutMs = 10000): Promise<void> {
+  private async waitForLoad(): Promise<void> {
     await this.cdp.send("Page.stopLoading").catch(() => {});
-    await this.delay(1000); // Simple wait; production would use Page.loadEventFired
+    await this.delay(1000);
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+}
+
+// ===== BrowserManager — multi-tab registry =====
+
+export class BrowserManager {
+  private sessions = new Map<string, TabSession>();
+  private activeTabId: string | null = null;
+
+  // ---- Tab lifecycle ----
+
+  createTab(tabId: string): TabSession {
+    const session = new TabSession(tabId);
+    this.sessions.set(tabId, session);
+    if (!this.activeTabId) {
+      this.activeTabId = tabId;
+    }
+    logger.info(`Tab created: ${tabId} (total: ${this.sessions.size})`);
+    return session;
+  }
+
+  closeTab(tabId: string): void {
+    const session = this.sessions.get(tabId);
+    if (!session) return;
+    if (this.sessions.size <= 1) {
+      logger.info(`Cannot close last tab: ${tabId}`);
+      return;
+    }
+    session.cleanup();
+    this.sessions.delete(tabId);
+    if (this.activeTabId === tabId) {
+      const remaining = [...this.sessions.keys()];
+      this.activeTabId = remaining[0];
+    }
+    logger.info(`Tab closed: ${tabId} (remaining: ${this.sessions.size})`);
+  }
+
+  setActiveTab(tabId: string): void {
+    if (this.sessions.has(tabId)) {
+      this.activeTabId = tabId;
+    }
+  }
+
+  getActiveSession(): TabSession | null {
+    return this.activeTabId ? this.sessions.get(this.activeTabId) ?? null : null;
+  }
+
+  getSession(tabId: string): TabSession | undefined {
+    return this.sessions.get(tabId);
+  }
+
+  getAllTabs(): Array<{ tabId: string; url: string; title: string; isActive: boolean }> {
+    const result: Array<{ tabId: string; url: string; title: string; isActive: boolean }> = [];
+    for (const [tabId, session] of this.sessions) {
+      result.push({
+        tabId,
+        url: session.url,
+        title: session.title,
+        isActive: tabId === this.activeTabId,
+      });
+    }
+    return result;
+  }
+
+  get tabCount(): number {
+    return this.sessions.size;
+  }
+
+  resolveSession(tabId?: string): TabSession {
+    if (tabId) {
+      const session = this.sessions.get(tabId);
+      if (!session) throw new Error(`Tab ${tabId} not found`);
+      return session;
+    }
+    const active = this.getActiveSession();
+    if (!active) throw new Error("No active tab");
+    return active;
+  }
+
+  // ---- Delegation methods (tabId is always optional, defaults to active tab) ----
+
+  async navigate(url: string, tabId?: string): Promise<{ pageState: PageState; snapshot: AXSnapshot }> {
+    return this.resolveSession(tabId).navigate(url);
+  }
+
+  getPageState(tabId?: string): PageState {
+    return this.resolveSession(tabId).getPageState();
+  }
+
+  async getSnapshot(full = false, tabId?: string): Promise<AXSnapshot> {
+    return this.resolveSession(tabId).getSnapshot(full);
+  }
+
+  async clickByRef(ref: string, tabId?: string): Promise<AXSnapshot> {
+    return this.resolveSession(tabId).clickByRef(ref);
+  }
+
+  async typeByRef(ref: string, text: string, tabId?: string): Promise<AXSnapshot> {
+    return this.resolveSession(tabId).typeByRef(ref, text);
+  }
+
+  async scroll(direction: "up" | "down", amount?: number, tabId?: string): Promise<void> {
+    return this.resolveSession(tabId).scroll(direction, amount);
+  }
+
+  async back(tabId?: string): Promise<AXSnapshot> {
+    return this.resolveSession(tabId).back();
+  }
+
+  async forward(tabId?: string): Promise<AXSnapshot> {
+    return this.resolveSession(tabId).forward();
+  }
+
+  async pressKey(key: string, tabId?: string): Promise<void> {
+    return this.resolveSession(tabId).pressKey(key);
+  }
+
+  getConsoleMessages(tabId?: string): string[] {
+    return this.resolveSession(tabId).getConsoleMessages();
+  }
+
+  async evaluateJs(expression: string, tabId?: string): Promise<string> {
+    return this.resolveSession(tabId).evaluateJs(expression);
+  }
+
+  async screenshot(tabId?: string): Promise<string> {
+    return this.resolveSession(tabId).screenshot();
+  }
+
+  async refresh(tabId?: string): Promise<void> {
+    return this.resolveSession(tabId).refresh();
+  }
+
+  // ---- CDP lifecycle (backward compat with existing initialize flow) ----
+
+  /**
+   * Wait until the browser is ready (any tab has CDP attached).
+   * @deprecated Use waitUntilReady on a specific TabSession via getSession(tabId).
+   */
+  async waitUntilReady(timeoutMs = 15000): Promise<void> {
+    const active = this.getActiveSession();
+    if (active) {
+      return active.waitUntilReady(timeoutMs);
+    }
+    throw new Error("No active tab");
+  }
+
+  /**
+   * Initialize: find the webview's webContents and attach CDP to the default tab.
+   * @deprecated Use createTab + attachToWebview on individual tabs.
+   */
+  async initialize(defaultTabId = "tab-initial"): Promise<void> {
+    logger.info("BrowserManager: looking for webview...");
+    const mainWin = BrowserWindow.getAllWindows()[0];
+    if (!mainWin) {
+      logger.info("BrowserManager: no window yet, will retry on first use");
+      return;
+    }
+
+    const session = this.createTab(defaultTabId);
+
+    const maxAttempts = 30;
+    for (let i = 0; i < maxAttempts; i++) {
+      const allWCs = webContents.getAllWebContents();
+      const webviewWc = allWCs.find((wc) => {
+        return (wc as any).hostWebContents?.id === mainWin.webContents.id;
+      });
+
+      if (webviewWc) {
+        await session.attachToWebview(webviewWc);
+        logger.info(`BrowserManager: attached default tab to webview (webContents ${webviewWc.id})`);
+        return;
+      }
+
+      await this.delay(1000);
+    }
+
+    logger.error("BrowserManager: webview not found after 30s");
+  }
+
+  /**
+   * Attach CDP to a specific webview for a given tab.
+   */
+  async attachToWebview(tabId: string, webContentsId: number): Promise<void> {
+    // Find or create session
+    let session = this.sessions.get(tabId);
+    if (!session) {
+      session = this.createTab(tabId);
+    }
+
+    if (session.webContentsId === webContentsId && session.isReady()) {
+      return; // Already attached
+    }
+
+    if (session.isReady()) {
+      session.cleanup();
+    }
+
+    const wc = webContents.fromId(webContentsId);
+    if (!wc) {
+      throw new Error(`No webContents found for ID ${webContentsId}`);
+    }
+
+    await session.attachToWebview(wc);
+    logger.info(`CDP attached: tab ${tabId} -> webContents ${webContentsId}`);
+  }
+
+  isReady(): boolean {
+    const active = this.getActiveSession();
+    return active?.isReady() ?? false;
+  }
+
+  cleanup() {
+    for (const session of this.sessions.values()) {
+      session.cleanup();
+    }
+    this.sessions.clear();
+    this.activeTabId = null;
+  }
+
+  /**
+   * Find a tab by matching a substring against URLs and titles.
+   */
+  findTab(match: string): string | null {
+    const lower = match.toLowerCase();
+    for (const [tabId, session] of this.sessions) {
+      if (session.url.toLowerCase().includes(lower) || session.title.toLowerCase().includes(lower)) {
+        return tabId;
+      }
+    }
+    return null;
   }
 
   private delay(ms: number): Promise<void> {
