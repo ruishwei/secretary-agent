@@ -48,11 +48,19 @@ interface SessionSlice {
   clearAgentState: () => void;
 }
 
+export interface PendingSkillReview {
+  skillName: string;
+  content: string;
+  actionCount: number;
+}
+
 // ===== Recording Slice =====
 
 interface RecordingSlice {
   recordingState: RecordingState;
   setRecordingState: (state: RecordingState) => void;
+  pendingSkillReview: PendingSkillReview | null;
+  setPendingSkillReview: (review: PendingSkillReview | null) => void;
 }
 
 // ===== Settings Slice =====
@@ -209,6 +217,8 @@ export const useStore = create<AppStore>((set) => ({
   // Recording slice defaults
   recordingState: { isRecording: false, actionCount: 0 },
   setRecordingState: (state) => set({ recordingState: state }),
+  pendingSkillReview: null,
+  setPendingSkillReview: (review) => set({ pendingSkillReview: review }),
 
   // Settings slice defaults
   settings: DEFAULT_SETTINGS,

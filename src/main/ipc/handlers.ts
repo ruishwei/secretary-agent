@@ -506,6 +506,18 @@ export function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.handle(IPC.RECORDING_SAVE_SKILL, async () => {
+    if (!operationRecorder) {
+      return { success: false, error: "No recorder instance" };
+    }
+    return operationRecorder.commitPendingSkill();
+  });
+
+  ipcMain.handle(IPC.RECORDING_DISCARD_SKILL, async () => {
+    operationRecorder?.discardPendingSkill();
+    return { success: true };
+  });
+
   // ===== System =====
 
   ipcMain.handle(IPC.GET_APP_VERSION, async () => {

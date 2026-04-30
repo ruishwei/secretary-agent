@@ -224,9 +224,22 @@ export class SkillManager {
     }
   }
 
-  /** Get skills index for system prompt injection. */
+  /** Get skills index for system prompt injection, sorted by modification time (newest first). */
   getSkillsIndex(): Array<{ name: string; category: string; description: string }> {
-    return [...this.skills.values()].map((s) => ({
+    const withMtime = [...this.skills.values()].map((s) => {
+      let mtimeMs = 0;
+      try {
+        const skillMd = path.join(s.path, "SKILL.md");
+        mtimeMs = fs.statSync(skillMd).mtimeMs;
+      } catch {
+        // keep 0
+      }
+      return { ...s, mtimeMs };
+    });
+
+    withMtime.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+    return withMtime.map((s) => ({
       name: s.name,
       category: s.category,
       description: s.description,

@@ -170,6 +170,25 @@ Browser Secretary Agent 是一个基于 Electron 的 AI 桌面应用。AI 助手
 
 ---
 
+### v0.1.7 — 2026-04-30 — 技能审核 + 技能索引上限 + 录制闭环
+
+**新增 — 技能审核对话框**
+- `SkillReviewDialog` 组件：录制停止后弹出 LLM 生成技能预览，支持编辑后保存或丢弃
+- 完整闭环：录制 → 停止 → LLM 合成 → 弹窗审核 → 保存/丢弃
+- 技能保存通过 `saveSkill()` IPC → `commitPendingSkill()` 写入磁盘
+- 技能丢弃通过 `discardSkill()` IPC → `discardPendingSkill()` 清理暂存
+
+**新增 — 技能索引上限**
+- `buildSkillsIndex()` 新增 `maxEntries` 参数（默认 15），超出部分显示 "Plus X more skills"
+- `SkillManager.getSkillsIndex()` 按文件修改时间排序（最新在前），确保活跃技能优先展示
+- 防止技能数量过多导致 system prompt 上下文膨胀
+
+**改进**
+- `pendingSkillReview` 状态接入 Zustand store，AddressBar 通过 store 驱动 SkillReviewDialog
+- 录制停止异步等待 LLM 合成结果后再弹出审核
+
+---
+
 ### v0.1.5 — 2026-04-30 — 浏览器技能优化 + 操作录制
 
 **优化 — 技能 DOM-First 策略**

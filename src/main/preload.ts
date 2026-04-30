@@ -106,7 +106,14 @@ const electronAPI = {
   // Operation Recording
   startRecording: (): Promise<void> => ipcRenderer.invoke(IPC.RECORDING_START),
 
-  stopRecording: (): Promise<void> => ipcRenderer.invoke(IPC.RECORDING_STOP),
+  stopRecording: (): Promise<{ success: boolean; actionCount: number; skillName?: string; skillContent?: string; error?: string }> =>
+    ipcRenderer.invoke(IPC.RECORDING_STOP),
+
+  saveSkill: (): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke(IPC.RECORDING_SAVE_SKILL),
+
+  discardSkill: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC.RECORDING_DISCARD_SKILL),
 
   onRecordingStateChanged: (callback: (state: RecordingState) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: RecordingState) => callback(data);

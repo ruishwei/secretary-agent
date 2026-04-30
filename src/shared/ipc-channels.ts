@@ -46,6 +46,8 @@ export const IPC = {
   RECORDING_START: "recording:start",
   RECORDING_STOP: "recording:stop",
   RECORDING_STATE_CHANGED: "recording:state-changed",
+  RECORDING_SAVE_SKILL: "recording:save-skill",
+  RECORDING_DISCARD_SKILL: "recording:discard-skill",
 
   // System
   GET_APP_VERSION: "system:get-version",

@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { useStore } from "../../store";
+import { SkillReviewDialog } from "./SkillReviewDialog";
 
 export function AddressBar() {
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
   const recordingState = useStore((s) => s.recordingState);
   const setRecordingState = useStore((s) => s.setRecordingState);
+  const pendingSkillReview = useStore((s) => s.pendingSkillReview);
+  const setPendingSkillReview = useStore((s) => s.setPendingSkillReview);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [urlInput, setUrlInput] = useState(activeTab?.url || "");
@@ -54,12 +57,29 @@ export function AddressBar() {
     }
   };
 
-  const handleToggleRecord = () => {
+  const handleToggleRecord = async () => {
     if (recordingState.isRecording) {
-      window.electronAPI?.stopRecording();
+      const result = await window.electronAPI?.stopRecording();
+      if (result?.success && result.skillContent) {
+        setPendingSkillReview({
+          skillName: result.skillName || "untitled-skill",
+          content: result.skillContent,
+          actionCount: result.actionCount,
+        });
+      }
     } else {
       window.electronAPI?.startRecording();
     }
+  };
+
+  const handleSaveSkill = async (content: string) => {
+    await window.electronAPI?.saveSkill();
+    setPendingSkillReview(null);
+  };
+
+  const handleDiscardSkill = async () => {
+    await window.electronAPI?.discardSkill();
+    setPendingSkillReview(null);
   };
 
   const isLoading = activeTab?.isLoading;
@@ -130,6 +150,17 @@ export function AddressBar() {
 
       {isLoading && (
         <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
+      )}
+
+      {/* Skill Review Dialog */}
+      {pendingSkillReview && (
+        <SkillReviewDialog
+          skillName={pendingSkillReview.skillName}
+          content={pendingSkillReview.content}
+          actionCount={pendingSkillReview.actionCount}
+          onSave={handleSaveSkill}
+          onDiscard={handleDiscardSkill}
+        />
       )}
     </div>
   );

@@ -98,14 +98,20 @@ ${extras.skillsIndex}`,
 
 /**
  * Build a compact skills index for injection into the system prompt.
+ * Caps at maxEntries to limit context usage (default 15).
+ * Overflow hint reminds the agent to use skill_list to search for more.
  */
 export function buildSkillsIndex(
-  skills: Array<{ name: string; category: string; description: string }>
+  skills: Array<{ name: string; category: string; description: string }>,
+  maxEntries = 15
 ): string {
   if (skills.length === 0) return "";
 
+  const shown = skills.slice(0, maxEntries);
+  const overflow = skills.length - maxEntries;
+
   const byCategory = new Map<string, typeof skills>();
-  for (const skill of skills) {
+  for (const skill of shown) {
     const list = byCategory.get(skill.category) || [];
     list.push(skill);
     byCategory.set(skill.category, list);
@@ -118,6 +124,15 @@ export function buildSkillsIndex(
       lines.push(`  - ${item.name}: ${item.description}`);
     }
   }
+
+  if (overflow > 0) {
+    const overflowCategories = new Set<string>();
+    for (let i = maxEntries; i < skills.length; i++) {
+      overflowCategories.add(skills[i].category);
+    }
+    lines.push(`\nPlus ${overflow} more skills in categories: ${[...overflowCategories].join(", ")}. Use skill_list to search.`);
+  }
+
   return lines.join("\n");
 }
 

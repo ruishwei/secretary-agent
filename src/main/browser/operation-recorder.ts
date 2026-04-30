@@ -391,6 +391,9 @@ export class OperationRecorder {
   private activeSession: RecordingSession | null = null;
   private onSkillSave?: (name: string, category: string, content: string) => Promise<void>;
   private onLLMSynthesis?: (prompt: string) => Promise<string>;
+  /** Pending skill content awaiting user review. */
+  pendingSkillContent: string | null = null;
+  pendingSkillName: string | null = null;
 
   /** Callback for saving a generated skill to disk (wired to SkillManager). */
   setSkillSaveCallback(cb: (name: string, category: string, content: string) => Promise<void>): void {
@@ -498,10 +501,6 @@ export class OperationRecorder {
       return { success: false, actionCount: session.actions.length, error: "No LLM synthesis callback configured" };
     }
 
-    if (!this.onSkillSave) {
-      return { success: false, actionCount: session.actions.length, error: "No skill save callback configured" };
-    }
-
     try {
       const prompt = buildSynthesisPrompt(session);
       const llmResponse = await this.onLLMSynthesis(prompt);
@@ -514,17 +513,42 @@ export class OperationRecorder {
       const nameMatch = skillContent.match(/^name:\s*(.+)$/m);
       const skillName = nameMatch ? nameMatch[1].trim() : "recorded-workflow";
 
-      // Extract description for category
-      const descMatch = skillContent.match(/^description:\s*(.+)$/m);
-      const category = customDescription || "recorded";
+      // Store pending for user review (NOT auto-saved)
+      this.pendingSkillContent = skillContent;
+      this.pendingSkillName = skillName;
 
-      await this.onSkillSave(skillName, category, skillContent);
-      logger.info(`Skill "${skillName}" synthesized via LLM (${session.actions.length} actions)`);
+      logger.info(`Skill "${skillName}" synthesized via LLM — awaiting user review (${session.actions.length} actions)`);
 
       return { success: true, skillName, content: skillContent, actionCount: session.actions.length };
     } catch (err: any) {
       return { success: false, actionCount: session.actions.length, error: `LLM synthesis failed: ${err.message}` };
     }
+  }
+
+  /** Commit the pending skill to disk after user approval. */
+  async commitPendingSkill(): Promise<{ success: boolean; error?: string }> {
+    if (!this.pendingSkillContent || !this.pendingSkillName) {
+      return { success: false, error: "No pending skill to commit" };
+    }
+    if (!this.onSkillSave) {
+      return { success: false, error: "No skill save callback configured" };
+    }
+    try {
+      await this.onSkillSave(this.pendingSkillName, "recorded", this.pendingSkillContent);
+      logger.info(`Skill "${this.pendingSkillName}" saved after user review`);
+      this.pendingSkillContent = null;
+      this.pendingSkillName = null;
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  /** Discard the pending skill after user rejection. */
+  discardPendingSkill(): void {
+    this.pendingSkillContent = null;
+    this.pendingSkillName = null;
+    logger.info("Pending skill discarded by user");
   }
 
   /** Cancel the current recording without saving. */
