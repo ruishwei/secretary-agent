@@ -11,6 +11,10 @@ import type {
   AppSettings,
   TabInfo,
   RecordingState,
+  PasswordEntry,
+  PasswordEntryInput,
+  SkillInfo,
+  MemoryContent,
 } from "../shared/types";
 
 /**
@@ -119,6 +123,37 @@ const electronAPI = {
     const handler = (_event: Electron.IpcRendererEvent, data: RecordingState) => callback(data);
     ipcRenderer.on(IPC.RECORDING_STATE_CHANGED, handler);
     return () => ipcRenderer.removeListener(IPC.RECORDING_STATE_CHANGED, handler);
+  },
+
+  // Password Manager
+  password: {
+    getAll: (): Promise<PasswordEntry[]> => ipcRenderer.invoke(IPC.PASSWORD_GET_ALL),
+    save: (input: PasswordEntryInput, id?: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC.PASSWORD_SAVE, input, id),
+    delete: (id: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC.PASSWORD_DELETE, id),
+  },
+
+  // Memory Management
+  memory: {
+    getContent: (): Promise<MemoryContent> => ipcRenderer.invoke(IPC.MEMORY_GET_CONTENT),
+    setContent: (target: "memory" | "user", content: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC.MEMORY_SET_CONTENT, target, content),
+  },
+
+  // Skills Management
+  skills: {
+    listAll: (): Promise<SkillInfo[]> => ipcRenderer.invoke(IPC.SKILLS_LIST_ALL),
+    getContent: (name: string): Promise<string | null> => ipcRenderer.invoke(IPC.SKILLS_GET_CONTENT, name),
+    delete: (name: string): Promise<{ success: boolean; error?: string }> =>
+      ipcRenderer.invoke(IPC.SKILLS_DELETE, name),
+  },
+
+  // Workspace
+  workspace: {
+    getPaths: (): Promise<{ skillsPath: string; memoryPath: string; sessionsPath: string }> =>
+      ipcRenderer.invoke(IPC.WORKSPACE_GET_PATHS),
+    openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke(IPC.WORKSPACE_OPEN_FOLDER, folderPath),
   },
 
   // System

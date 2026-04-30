@@ -49,6 +49,24 @@ export const IPC = {
   RECORDING_SAVE_SKILL: "recording:save-skill",
   RECORDING_DISCARD_SKILL: "recording:discard-skill",
 
+  // Password Manager
+  PASSWORD_GET_ALL: "password:get-all",
+  PASSWORD_SAVE: "password:save",
+  PASSWORD_DELETE: "password:delete",
+
+  // Memory Management
+  MEMORY_GET_CONTENT: "memory:get-content",
+  MEMORY_SET_CONTENT: "memory:set-content",
+
+  // Skills Management
+  SKILLS_LIST_ALL: "skills:list-all",
+  SKILLS_GET_CONTENT: "skills:get-content",
+  SKILLS_DELETE: "skills:delete",
+
+  // Workspace
+  WORKSPACE_GET_PATHS: "workspace:get-paths",
+  WORKSPACE_OPEN_FOLDER: "workspace:open-folder",
+
   // System
   GET_APP_VERSION: "system:get-version",
 } as const;

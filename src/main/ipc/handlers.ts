@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow } from "electron";
+import { ipcMain, BrowserWindow, shell } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { Logger } from "../utils/logger";
 import { APP_VERSION } from "../../shared/constants";
@@ -12,6 +12,7 @@ import { registerSkillTools } from "../agent/tools/skills/register-skill-tools";
 import { registerMemoryTools } from "../agent/tools/memory/register-memory-tools";
 import { SkillManager } from "../skills/skill-manager";
 import { MemoryStore } from "../memory/memory-store";
+import { PasswordStore } from "../password-manager/password-store";
 import { getConfig } from "../utils/config";
 import { loadSettings, saveSettings } from "../utils/settings-store";
 
@@ -27,6 +28,23 @@ import { OperationRecorder } from "../browser/operation-recorder";
 let browserManager: BrowserManager;
 let browserStateProvider: BrowserStateProvider;
 let operationRecorder: OperationRecorder;
+let passwordStore: PasswordStore;
+let _skillManager: SkillManager | null = null;
+let _memoryStore: MemoryStore | null = null;
+
+function ensureSkillManager(): SkillManager {
+  if (!_skillManager) {
+    _skillManager = new SkillManager(getConfig().skillsPath);
+  }
+  return _skillManager;
+}
+
+function ensureMemoryStore(): MemoryStore {
+  if (!_memoryStore) {
+    _memoryStore = new MemoryStore(getConfig().memoryPath, getConfig().sessionsPath);
+  }
+  return _memoryStore;
+}
 
 function getMainWin(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows();
@@ -129,11 +147,10 @@ async function initAgentLoop(): Promise<AgentLoop> {
     sendToRenderer: getRendererSender(),
   });
 
-  // Initialize skill and memory systems
-  const config = getConfig();
-  const skillManager = new SkillManager(config.skillsPath);
+  // Initialize skill and memory systems (shared singletons, also used by settings IPC)
+  const skillManager = ensureSkillManager();
   await skillManager.initialize();
-  const memoryStore = new MemoryStore(config.memoryPath, config.sessionsPath);
+  const memoryStore = ensureMemoryStore();
 
   registerSkillTools(toolExecutor, skillManager);
   registerMemoryTools(toolExecutor, memoryStore);
@@ -516,6 +533,94 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.RECORDING_DISCARD_SKILL, async () => {
     operationRecorder?.discardPendingSkill();
     return { success: true };
+  });
+
+  // ===== Password Manager =====
+
+  ipcMain.handle(IPC.PASSWORD_GET_ALL, async () => {
+    if (!passwordStore) passwordStore = new PasswordStore();
+    return passwordStore.getAll();
+  });
+
+  ipcMain.handle(IPC.PASSWORD_SAVE, async (_event, input: { domain: string; username: string; password: string }, id?: string) => {
+    if (!passwordStore) passwordStore = new PasswordStore();
+    return passwordStore.save(input, id);
+  });
+
+  ipcMain.handle(IPC.PASSWORD_DELETE, async (_event, entryId: string) => {
+    if (!passwordStore) passwordStore = new PasswordStore();
+    return passwordStore.delete(entryId);
+  });
+
+  // ===== Memory Management =====
+
+  ipcMain.handle(IPC.MEMORY_GET_CONTENT, async () => {
+    const store = ensureMemoryStore();
+    return {
+      memory: store.getMemorySnapshot(),
+      user: store.getUserProfile(),
+    };
+  });
+
+  ipcMain.handle(IPC.MEMORY_SET_CONTENT, async (_event, target: "memory" | "user", content: string) => {
+    const store = ensureMemoryStore();
+    // Replace full content by reading current, finding old, and replacing
+    if (target === "memory") {
+      const current = store.getMemorySnapshot();
+      if (current) {
+        return store.replace("memory", current, content);
+      }
+      return store.add("memory", content);
+    } else {
+      const current = store.getUserProfile();
+      if (current) {
+        return store.replace("user", current, content);
+      }
+      return store.add("user", content);
+    }
+  });
+
+  // ===== Skills Management =====
+
+  ipcMain.handle(IPC.SKILLS_LIST_ALL, async () => {
+    const mgr = ensureSkillManager();
+    await mgr.initialize();
+    const skills = mgr.list();
+    const bundledPath = (mgr as any).bundledSkillsPath || "";
+    return skills.map((s) => ({
+      name: s.name,
+      category: s.category,
+      description: s.description,
+      version: s.version,
+      isBundled: s.path.startsWith(bundledPath),
+    }));
+  });
+
+  ipcMain.handle(IPC.SKILLS_GET_CONTENT, async (_event, name: string) => {
+    const mgr = ensureSkillManager();
+    await mgr.initialize();
+    return mgr.load(name);
+  });
+
+  ipcMain.handle(IPC.SKILLS_DELETE, async (_event, name: string) => {
+    const mgr = ensureSkillManager();
+    await mgr.initialize();
+    return mgr.delete(name);
+  });
+
+  // ===== Workspace =====
+
+  ipcMain.handle(IPC.WORKSPACE_GET_PATHS, async () => {
+    const config = getConfig();
+    return {
+      skillsPath: config.skillsPath,
+      memoryPath: config.memoryPath,
+      sessionsPath: config.sessionsPath,
+    };
+  });
+
+  ipcMain.handle(IPC.WORKSPACE_OPEN_FOLDER, async (_event, folderPath: string) => {
+    await shell.openPath(folderPath);
   });
 
   // ===== System =====

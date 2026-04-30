@@ -1,18 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { ChatPanel } from "./components/ChatPanel/ChatPanel";
+import { RightPanel } from "./components/RightPanel/RightPanel";
 import { BrowserView } from "./components/BrowserView/BrowserView";
 import { TabBar } from "./components/BrowserView/TabBar";
 import { AddressBar } from "./components/BrowserView/AddressBar";
 import { ControlBar } from "./components/ControlBar/ControlBar";
-import { AgentThinking } from "./components/AgentThinking/AgentThinking";
 import { ReviewDialog } from "./components/ReviewDialog/ReviewDialog";
-import { SettingsPanel } from "./components/Settings/SettingsPanel";
 import { useSession } from "./hooks/useSession";
 import { useStore } from "./store";
+import type { RightPanelTab } from "./components/RightPanel/RightPanelHeader";
 
 export default function App() {
   const { reviewRequest, handleReviewResponse } = useSession();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("chat");
   const updateSettings = useStore((s) => s.updateSettings);
 
   // Load persisted settings from main process on startup
@@ -27,28 +26,25 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen">
       {/* Control Bar — top strip */}
-      <ControlBar onOpenSettings={() => setSettingsOpen(true)} />
+      <ControlBar onOpenSettings={() => setRightPanelTab("settings")} />
 
       {/* Main Content Area */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Panel — Chat + Agent Thinking */}
-        <div className="w-[400px] min-w-[320px] flex flex-col border-r border-gray-800">
-          {/* Agent Thinking Indicator */}
-          <AgentThinking />
-          {/* Chat Panel */}
-          <ChatPanel />
-        </div>
-
-        {/* Right Panel — Multi-Tab Browser */}
+        {/* Left Panel — Multi-Tab Browser */}
         <div className="flex-1 flex flex-col">
-          {/* Tab Bar */}
           <TabBar />
-          {/* Address Bar */}
           <AddressBar />
-          {/* Webview Area */}
           <div className="flex-1 relative">
             <BrowserView />
           </div>
+        </div>
+
+        {/* Right Panel — Chat + Settings (tabbed) */}
+        <div className="w-[400px] min-w-[320px] flex flex-col border-l border-gray-800">
+          <RightPanel
+            activeTab={rightPanelTab}
+            onTabChange={setRightPanelTab}
+          />
         </div>
       </div>
 
@@ -59,12 +55,6 @@ export default function App() {
           onResponse={handleReviewResponse}
         />
       )}
-
-      {/* Settings Modal */}
-      <SettingsPanel
-        isOpen={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-      />
     </div>
   );
 }

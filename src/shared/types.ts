@@ -233,6 +233,15 @@ export interface AppSettings {
     homeUrl: string;
     autoApproveDomains: string[];
   };
+  language: "zh-CN" | "en";
+  privacy: {
+    autoFillEnabled: boolean;
+  };
+  workspace: {
+    skillsPath: string;
+    memoryPath: string;
+    sessionsPath: string;
+  };
 }
 
 // ===== Operation Recording =====
@@ -258,6 +267,40 @@ export interface RecordingState {
   tabId?: string;
 }
 
+// ===== Password Manager =====
+
+export interface PasswordEntry {
+  id: string;
+  domain: string;
+  username: string;
+  password: string; // decrypted when sent to renderer
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface PasswordEntryInput {
+  domain: string;
+  username: string;
+  password: string;
+}
+
+// ===== Skills Management =====
+
+export interface SkillInfo {
+  name: string;
+  category: string;
+  description: string;
+  version: string;
+  isBundled: boolean;
+}
+
+// ===== Memory Management =====
+
+export interface MemoryContent {
+  memory: string;
+  user: string;
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   llm: {
     provider: "anthropic",
@@ -273,5 +316,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   browser: {
     homeUrl: "about:blank",
     autoApproveDomains: [],
+  },
+  language: "zh-CN",
+  privacy: {
+    autoFillEnabled: false,
+  },
+  workspace: {
+    skillsPath: "",
+    memoryPath: "",
+    sessionsPath: "",
   },
 };

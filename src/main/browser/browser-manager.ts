@@ -413,9 +413,10 @@ export class BrowserManager {
   setMainWindow(win: BrowserWindow) {
     this.mainWindow = win;
     // Set initial layout based on window size.
-    // Left panel ≈ 400px. Top chrome: ControlBar(~30) + TabBar(~32) + AddressBar(~28) ≈ 90px.
+    // Right panel ≈ 400px (on right). Browser starts at x=0.
+    // Top chrome: ControlBar(~30) + TabBar(~32) + AddressBar(~28) ≈ 90px.
     const [w, h] = win.getContentSize();
-    this.layoutBounds = { x: 400, y: 90, width: w - 400, height: h - 90 };
+    this.layoutBounds = { x: 0, y: 90, width: w - 400, height: h - 90 };
   }
 
   setStatePushCallback(cb: (state: BrowserState) => void) {

@@ -26,6 +26,9 @@ export function loadSettings(): AppSettings {
         llm: { ...DEFAULT_SETTINGS.llm, ...(saved.llm || {}) },
         voice: { ...DEFAULT_SETTINGS.voice, ...(saved.voice || {}) },
         browser: { ...DEFAULT_SETTINGS.browser, ...(saved.browser || {}) },
+        privacy: { ...DEFAULT_SETTINGS.privacy, ...(saved.privacy || {}) },
+        workspace: { ...DEFAULT_SETTINGS.workspace, ...(saved.workspace || {}) },
+        language: saved.language || DEFAULT_SETTINGS.language,
       };
       logger.info("Settings loaded from disk");
       return merged;
