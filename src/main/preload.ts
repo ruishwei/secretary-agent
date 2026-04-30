@@ -43,11 +43,23 @@ const electronAPI = {
     return () => ipcRenderer.removeListener(IPC.BROWSER_SCREENSHOT, handler);
   },
 
-  attachWebview: (tabId: string, webContentsId: number): Promise<void> =>
-    ipcRenderer.invoke(IPC.BROWSER_ATTACH_WEBVIEW, { tabId, webContentsId }),
-
   navigateTo: (url: string, tabId?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.BROWSER_NAVIGATE_TO, url, tabId),
+
+  goBack: (tabId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_GO_BACK, tabId),
+
+  goForward: (tabId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_GO_FORWARD, tabId),
+
+  refresh: (tabId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_REFRESH, tabId),
+
+  stop: (tabId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_STOP, tabId),
+
+  updateBrowserLayout: (bounds: { x: number; y: number; width: number; height: number }): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_LAYOUT, bounds),
 
   // Tab management
   createTab: (url?: string): Promise<void> =>

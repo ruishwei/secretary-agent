@@ -1,12 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { useStore } from "../../store";
 
-function getActiveWebview(): any {
-  const activeTabId = useStore.getState().activeTabId;
-  if (!activeTabId) return null;
-  return document.querySelector(`webview[data-tab-id="${activeTabId}"]`);
-}
-
 export function AddressBar() {
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
@@ -33,15 +27,15 @@ export function AddressBar() {
   };
 
   const handleBack = () => {
-    getActiveWebview()?.goBack();
+    window.electronAPI?.goBack(activeTabId ?? undefined);
   };
 
   const handleForward = () => {
-    getActiveWebview()?.goForward();
+    window.electronAPI?.goForward(activeTabId ?? undefined);
   };
 
   const handleRefresh = () => {
-    getActiveWebview()?.reload();
+    window.electronAPI?.refresh(activeTabId ?? undefined);
   };
 
   const handleHome = () => {
@@ -50,32 +44,42 @@ export function AddressBar() {
     }
   };
 
+  const isLoading = activeTab?.isLoading;
+  const canGoBack = activeTab?.canGoBack;
+  const canGoForward = activeTab?.canGoForward;
+
+  const btnBase = "px-1.5 py-0.5 text-sm rounded transition-colors";
+  const btnActive = "text-gray-400 hover:text-gray-100 hover:bg-gray-800";
+  const btnDisabled = "text-gray-700 cursor-default";
+
   return (
     <div className="flex items-center gap-1 px-2 py-1 bg-gray-900 border-b border-gray-700 flex-shrink-0">
       <button
         onClick={handleBack}
-        className="px-1.5 py-0.5 text-gray-400 hover:text-gray-100 text-sm"
+        disabled={!canGoBack}
+        className={`${btnBase} ${canGoBack ? btnActive : btnDisabled}`}
         title="Back"
       >
         &#8592;
       </button>
       <button
         onClick={handleForward}
-        className="px-1.5 py-0.5 text-gray-400 hover:text-gray-100 text-sm"
+        disabled={!canGoForward}
+        className={`${btnBase} ${canGoForward ? btnActive : btnDisabled}`}
         title="Forward"
       >
         &#8594;
       </button>
       <button
         onClick={handleRefresh}
-        className="px-1.5 py-0.5 text-gray-400 hover:text-gray-100 text-sm"
-        title="Refresh"
+        className={`${btnBase} ${isLoading ? "text-red-400 hover:text-red-300 hover:bg-gray-800" : btnActive}`}
+        title={isLoading ? "Stop" : "Refresh"}
       >
-        &#8635;
+        {isLoading ? "✕" : "⟳"}
       </button>
       <button
         onClick={handleHome}
-        className="px-1.5 py-0.5 text-gray-400 hover:text-gray-100 text-sm"
+        className={`${btnBase} ${btnActive}`}
         title="Home"
       >
         &#8962;
@@ -91,7 +95,7 @@ export function AddressBar() {
         spellCheck={false}
       />
 
-      {activeTab?.isLoading && (
+      {isLoading && (
         <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />
       )}
     </div>

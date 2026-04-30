@@ -111,6 +111,42 @@ Browser Secretary Agent 是一个基于 Electron 的 AI 桌面应用。AI 助手
 
 ---
 
+### v0.1.4 — 2026-04-30 — Phase 5: Skills System + Phase 6: Memory System
+
+**新增 — Skills System (Phase 5)**
+- `SkillManager` 技能管理服务：扫描 bundled + user 技能目录，解析 YAML frontmatter
+- 5 个技能管理工具：`skill_list`、`skill_view`、`skill_create`、`skill_patch`、`skill_delete`
+- 2 个内置示例技能：`form-filling`（表单填充工作流）、`data-extraction`（数据提取工作流）
+- 技能索引注入 system prompt（按 category 分组展示 name + description）
+- 渐进式 3 层加载：index → SKILL.md → 链接参考文件
+
+**新增 — Memory System (Phase 6)**
+- `MemoryStore` 记忆存储服务：管理 `MEMORY.md`（agent 笔记）和 `USER.md`（用户画像）
+- 5 个记忆管理工具：`memory_search`、`memory_get`、`memory_add`、`memory_replace`、`session_search`
+- Frozen snapshot 模式：会话启动时加载记忆，写入即时落盘但不刷新运行中 prompt
+- `§` 分隔符追加 + 自动 LRU 裁剪（MEMORY.md ≤2200 字符，USER.md ≤1375 字符）
+- Prompt 注入防护：过滤不可见 Unicode（ZWSP-RLM 范围）、拒绝角色注入标记
+- 会话转录保存（JSONL）+ `session_search` 跨会话全文检索
+- Context compaction 前触发 memory flush 提示
+
+**新增 — Favicon 显示**
+- TabSession 新增 `favicon` 字段，通过 CDP `page-favicon-updated` 事件捕获
+- TabBar 组件：加载中显示蓝色旋转动画，有 favicon 显示图标（onError fallback 到 globe SVG），无 favicon 显示 globe SVG
+- 修复 favicon 闪烁 bug：TAB_CREATE / TAB_SWITCH handler 中 `pushTabState()` 缺少 `favicon` 字段导致渲染层覆盖
+
+**改进**
+- `buildSystemPrompt()` 新增 `extras` 参数：`memorySection`、`userProfileSection`、`skillsIndex`
+- `AgentLoop.runLoop()` 在每个 turn 构建 system prompt 时注入记忆 + 用户画像 + 技能索引
+- `AgentLoop` 会话结束后自动保存 transcript 到 MemoryStore
+- IPC handlers 初始化链集成 SkillManager 和 MemoryStore 注册
+
+**文件变更**
+- 新增 15 个文件（SkillManager, MemoryStore, 10 tool factories, 2 bundled skills）
+- 修改 2 个文件（agent-loop.ts, handlers.ts）
+- 修改 4 个文件（favicon 实现：browser-manager.ts, handlers.ts, types.ts, TabBar.tsx）
+
+---
+
 ### v0.1.0 — 2026-04-27 — 初始版本
 
 **Phase 1 + 2 完整实现**
@@ -219,7 +255,7 @@ browser-secretary-agent/
 ## 待实现 (Phase 4-8)
 
 - Phase 4: Human-in-the-Loop（Take Over / Hand Back / Review 完整流程）
-- Phase 5: Skills System（技能复用）
-- Phase 6: Memory System（记忆进化）
 - Phase 7: Voice + Polish（语音 + 体验打磨）
 - Phase 8: Build + Packaging（打包发布）
+- Learning System: Recall Tracking（召回追踪 + 短期记忆评分）
+- Memory Consolidation: 6-component scoring + promotion + temporal decay

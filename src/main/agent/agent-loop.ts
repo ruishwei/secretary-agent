@@ -1,10 +1,12 @@
-import { BrowserWindow } from "electron";
 import { LLMClient, type LLMConfig } from "./llm-client";
 import { ContextManager } from "./context-manager";
-import { ToolExecutor, type ToolResult } from "./tool-executor";
-import { buildSystemPrompt } from "./prompt-templates";
+import { ToolExecutor } from "./tool-executor";
+import { buildSystemPrompt, buildSkillsIndex, buildMemoryFlushPrompt } from "./prompt-templates";
 import { BrowserManager } from "../browser/browser-manager";
-import { IPC } from "../../shared/ipc-channels";
+import { BrowserStateProvider } from "../browser/browser-state-provider";
+import type { StateProvider } from "./state-provider";
+import type { SkillManager } from "../skills/skill-manager";
+import type { MemoryStore } from "../memory/memory-store";
 import type { AgentEvent } from "../../shared/types";
 import { MAX_AGENT_TOOL_TURNS } from "../../shared/constants";
 import { Logger } from "../utils/logger";
@@ -19,33 +21,35 @@ export class AgentLoop {
   private llm: LLMClient;
   private context: ContextManager;
   private toolExecutor: ToolExecutor;
-  browserManager: BrowserManager;
+  private stateProvider: StateProvider;
+  private skillManager: SkillManager | null = null;
+  private memoryStore: MemoryStore | null = null;
   private abortController: AbortController | null = null;
   private running = false;
   private turnCount = 0;
 
-  constructor(config: AgentConfig) {
+  constructor(config: AgentConfig, stateProvider: StateProvider, toolExecutor: ToolExecutor) {
     this.llm = new LLMClient(config.llm);
-    this.browserManager = new BrowserManager();
-    this.toolExecutor = new ToolExecutor(this.browserManager, this.llm);
-    this.toolExecutor.registerBrowserTools();
-
-    // Wire renderer callback so tab tools notify the UI
-    this.toolExecutor.setRendererCallback((channel, data) => {
-      const win = BrowserWindow.getAllWindows()[0];
-      if (win && !win.isDestroyed()) {
-        win.webContents.send(channel as any, data);
-      }
-    });
+    this.stateProvider = stateProvider;
+    this.toolExecutor = toolExecutor;
 
     this.context = new ContextManager(config.llm.maxTokens);
+  }
+
+  setSkillManager(sm: SkillManager): void {
+    this.skillManager = sm;
+  }
+
+  setMemoryStore(ms: MemoryStore): void {
+    this.memoryStore = ms;
   }
 
   /**
    * Initialize browser CDP connection.
    */
   async initialize(): Promise<void> {
-    await this.browserManager.initialize();
+    const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
+    await bm.initialize();
     logger.info("Agent loop initialized");
   }
 
@@ -53,14 +57,30 @@ export class AgentLoop {
    * Attach CDP to a specific webview by its webContents ID and optional tab ID.
    */
   async attachBrowser(tabId: string, webContentsId: number): Promise<void> {
-    await this.browserManager.attachToWebview(tabId, webContentsId);
+    const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
+    await bm.attachToWebview(tabId, webContentsId);
   }
 
   /**
    * Navigate the embedded browser to a URL on the active tab (or specified tab) and return a snapshot.
    */
   async navigateBrowser(url: string, tabId?: string) {
-    return this.browserManager.navigate(url, tabId);
+    const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
+    return bm.navigate(url, tabId);
+  }
+
+  /**
+   * Direct access to BrowserManager for IPC handlers that need tab lifecycle methods.
+   */
+  getBrowserManager(): BrowserManager {
+    return (this.stateProvider as BrowserStateProvider).getBrowserManager();
+  }
+
+  /**
+   * Get the LLM client (for tool registration that needs it).
+   */
+  getLLMClient(): LLMClient {
+    return this.llm;
   }
 
   /**
@@ -80,31 +100,58 @@ export class AgentLoop {
       return;
     }
 
-    this.running = true;
     this.turnCount = 0;
+    this.context.addUserMessage(userMessage);
+    yield* this.runLoop();
+  }
+
+  /**
+   * Abort the currently running agent loop.
+   */
+  abort() {
+    if (this.abortController) {
+      this.abortController.abort();
+    }
+    this.running = false;
+  }
+
+  /**
+   * Resume agent loop after user review.
+   */
+  async *resumeAfterReview(_reviewId: string, approved: boolean, modifications?: string): AsyncGenerator<AgentEvent> {
+    if (approved) {
+      const reviewMsg = modifications
+        ? `User approved with modifications: ${modifications}. Please apply these changes and continue.`
+        : "User approved. Please continue.";
+      this.context.addUserMessage(reviewMsg);
+      yield* this.runLoop();
+    } else {
+      yield { type: "done", summary: "User rejected the review. Task cancelled." };
+      this.running = false;
+    }
+  }
+
+  isRunning(): boolean {
+    return this.running;
+  }
+
+  cleanup() {
+    this.abort();
+    this.stateProvider.cleanup();
+  }
+
+  // ===== Private: shared agent loop =====
+
+  private async *runLoop(): AsyncGenerator<AgentEvent> {
+    this.running = true;
     this.abortController = new AbortController();
     this.toolExecutor.setAbortSignal(this.abortController.signal);
 
-    // Add user message to context
-    this.context.addUserMessage(userMessage);
-
-    // Build system prompt
-    const pageState = this.browserManager.getPageState();
-    const allTabs = this.browserManager.getAllTabs();
-    const systemPrompt = buildSystemPrompt({
-      mode: "ai",
-      currentUrl: pageState.url,
-      allTabs,
-      // Memory and skills will be populated in Phase 5/6
-    });
-
-    this.context.setSystemPrompt(systemPrompt);
-
     try {
-      // Wait for browser to be ready (webview CDP attached)
+      // Wait for state provider to be ready
       yield { type: "thinking", plan: "Waiting for browser to be ready..." };
       try {
-        await this.browserManager.waitUntilReady();
+        await this.stateProvider.waitUntilReady();
       } catch {
         yield { type: "error", message: "Browser is not ready. Please make sure the webview has loaded.", recoverable: true };
         return;
@@ -119,31 +166,47 @@ export class AgentLoop {
 
         // Check context compaction
         if (this.context.shouldCompact()) {
+          // Prompt to save durable knowledge before compressing
+          if (this.memoryStore) {
+            yield {
+              type: "thinking",
+              plan: buildMemoryFlushPrompt({
+                newFacts: [],
+                userPreferences: [],
+                environmentChanges: [],
+              }),
+            };
+          }
           yield { type: "thinking", plan: "Compacting conversation context..." };
           this.context.compact();
         }
 
         this.turnCount++;
 
-        // Get current page snapshot for the AI
-        // (This is done each turn so the AI always has fresh page state)
-        let pageSnapshot: string | undefined;
-        try {
-          const snapshot = await this.browserManager.getSnapshot();
-          pageSnapshot = snapshot.text;
-        } catch {
-          // Browser might not have a page loaded yet
+        // Build system prompt from domain state providers
+        const sections = this.stateProvider.getContextSections();
+
+        // Add async snapshot section if available
+        if (this.stateProvider.buildSnapshotSection) {
+          const snapshotSection = await this.stateProvider.buildSnapshotSection();
+          if (snapshotSection) {
+            sections.push(snapshotSection);
+          }
         }
 
-        // Update system prompt with fresh page data
-        const currentPrompt = buildSystemPrompt({
-          mode: "ai",
-          currentUrl: this.browserManager.getPageState().url,
-          pageSnapshot,
-          allTabs: this.browserManager.getAllTabs(),
-          activeTabId: this.browserManager.getActiveSession()?.tabId,
+        // Load memory snapshot (frozen at session start — writes don't refresh it)
+        const memorySection = this.memoryStore?.getMemorySnapshot();
+        const userProfileSection = this.memoryStore?.getUserProfile();
+        const skillsIndex = this.skillManager?.getSkillsIndex()
+          ? buildSkillsIndex(this.skillManager.getSkillsIndex())
+          : undefined;
+
+        const systemPrompt = buildSystemPrompt(sections, {
+          memorySection,
+          userProfileSection,
+          skillsIndex,
         });
-        this.context.setSystemPrompt(currentPrompt);
+        this.context.setSystemPrompt(systemPrompt);
 
         const tools = this.toolExecutor.getToolDefinitions();
 
@@ -159,14 +222,16 @@ export class AgentLoop {
 
         try {
           for await (const response of this.llm.sendMessage(
-            currentPrompt,
+            systemPrompt,
             this.context.getMessages(),
             tools,
             { signal: this.abortController.signal }
           )) {
+            if (response.thinkingText) {
+              yield { type: "thinking", plan: response.thinkingText, reasoning: response.thinkingText };
+            }
             if (response.text) {
               finalText = response.text;
-              // Stream text updates
               yield { type: "response", text: finalText };
             }
             if (response.toolCalls && response.toolCalls.length > 0) {
@@ -195,13 +260,17 @@ export class AgentLoop {
         // Process tool calls
         this.context.addAssistantResponse(finalText, finalToolCalls, finalThinkingBlocks);
 
-        // Yield tool start events
+        // Yield tool start events with timestamps
+        const toolStartTimes = new Map<string, number>();
         for (const tc of finalToolCalls) {
+          const timestamp = Date.now();
+          toolStartTimes.set(tc.id, timestamp);
           yield {
             type: "tool-start",
             toolCallId: tc.id,
             tool: tc.name,
             args: tc.input,
+            timestamp,
           };
         }
 
@@ -209,9 +278,11 @@ export class AgentLoop {
         const toolResults: Array<{ toolCallId: string; name: string; result: string; isError?: boolean }> = [];
 
         for (const tc of finalToolCalls) {
+          const startTime = toolStartTimes.get(tc.id) || Date.now();
           const result = await this.toolExecutor.execute(tc.name, tc.input);
+          const durationMs = Date.now() - startTime;
 
-          // Yield tool result
+          // Yield tool result with timing
           yield {
             type: "tool-result",
             toolCallId: tc.id,
@@ -219,6 +290,7 @@ export class AgentLoop {
             result: result.error || result.result,
             success: result.success,
             error: result.error,
+            durationMs,
           };
 
           toolResults.push({
@@ -230,12 +302,33 @@ export class AgentLoop {
 
           // If a tool returned a fresh snapshot, update the prompt for the next LLM call
           if (result.snapshot) {
-            pageSnapshot = result.snapshot;
+            // Replace or add snapshot section
+            const idx = sections.findIndex((s) => s.id === "browser:snapshot");
+            const snapSection = {
+              id: "browser:snapshot",
+              priority: 21,
+              content: `### Page Snapshot (Accessibility Tree)\n\`\`\`\n${result.snapshot}\n\`\`\`\n\nUse the @ref IDs above to interact with page elements.`,
+            };
+            if (idx >= 0) {
+              sections[idx] = snapSection;
+            } else {
+              sections.push(snapSection);
+            }
           }
         }
 
         // Add tool results to context
         this.context.addToolResults(toolResults);
+
+        // Check if any tool updated the plan
+        for (const tc of finalToolCalls) {
+          if (tc.name === "browser_todo_write" && tc.input.items) {
+            yield {
+              type: "plan-update",
+              items: tc.input.items as Array<{ id: string; text: string; status: "pending" | "in_progress" | "completed" }>,
+            };
+          }
+        }
 
         // Check if any tool requires review
         for (const tc of finalToolCalls) {
@@ -267,147 +360,21 @@ export class AgentLoop {
         recoverable: false,
       };
     } finally {
-      this.running = false;
-      this.abortController = null;
-      this.toolExecutor.setAbortSignal(null);
-    }
-  }
-
-  /**
-   * Abort the currently running agent loop.
-   */
-  abort() {
-    if (this.abortController) {
-      this.abortController.abort();
-    }
-    this.running = false;
-  }
-
-  /**
-   * Resume agent loop after user review.
-   */
-  async *resumeAfterReview(reviewId: string, approved: boolean, modifications?: string): AsyncGenerator<AgentEvent> {
-    if (approved) {
-      // Add the review result to context
-      const reviewMsg = modifications
-        ? `User approved with modifications: ${modifications}. Please apply these changes and continue.`
-        : "User approved. Please continue.";
-      this.context.addUserMessage(reviewMsg);
-
-      // Continue the agent loop with this message
-      yield* this.continueLoop();
-    } else {
-      yield { type: "done", summary: "User rejected the review. Task cancelled." };
-      this.running = false;
-    }
-  }
-
-  /**
-   * Internal method to continue the agent loop from current context.
-   */
-  private async *continueLoop(): AsyncGenerator<AgentEvent> {
-    this.running = true;
-    this.abortController = new AbortController();
-    this.toolExecutor.setAbortSignal(this.abortController.signal);
-
-    try {
-      // Wait for browser to be ready before continuing
-      await this.browserManager.waitUntilReady();
-
-      // Re-run the loop (reuses the existing context with new user message)
-      while (this.turnCount < MAX_AGENT_TOOL_TURNS) {
-        if (this.abortController.signal.aborted) {
-          yield { type: "done", summary: "Agent aborted." };
-          return;
-        }
-
-        this.turnCount++;
-
-        let pageSnapshot: string | undefined;
+      // Save session transcript for future session_search
+      if (this.memoryStore) {
         try {
-          pageSnapshot = (await this.browserManager.getSnapshot()).text;
-        } catch { /* ignore */ }
-
-        const currentPrompt = buildSystemPrompt({
-          mode: "ai",
-          currentUrl: this.browserManager.getPageState().url,
-          pageSnapshot,
-          allTabs: this.browserManager.getAllTabs(),
-          activeTabId: this.browserManager.getActiveSession()?.tabId,
-        });
-        this.context.setSystemPrompt(currentPrompt);
-
-        const tools = this.toolExecutor.getToolDefinitions();
-
-        yield { type: "thinking", plan: `Turn ${this.turnCount}: Analyzing and deciding...` };
-
-        let finalText = "";
-        let finalToolCalls: Array<{ id: string; name: string; input: Record<string, unknown> }> = [];
-        let finalThinkingBlocks: Array<{ thinking: string; signature?: string }> | undefined;
-
-        for await (const response of this.llm.sendMessage(
-          currentPrompt,
-          this.context.getMessages(),
-          tools,
-          { signal: this.abortController.signal }
-        )) {
-          if (response.text) {
-            finalText = response.text;
-            yield { type: "response", text: finalText };
-          }
-          if (response.toolCalls && response.toolCalls.length > 0) {
-            finalToolCalls = response.toolCalls;
-          }
-          if (response.thinkingBlocks) {
-            finalThinkingBlocks = response.thinkingBlocks;
-          }
+          const messages = this.context.getMessages().map((m) => ({
+            role: m.role,
+            content: typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+          }));
+          this.memoryStore.saveSession(messages);
+        } catch {
+          // Don't let session saving break the agent
         }
-
-        if (finalToolCalls.length === 0) {
-          this.context.addAssistantResponse(finalText, undefined, finalThinkingBlocks);
-          yield { type: "done", summary: finalText };
-          return;
-        }
-
-        this.context.addAssistantResponse(finalText, finalToolCalls, finalThinkingBlocks);
-
-        for (const tc of finalToolCalls) {
-          yield { type: "tool-start", toolCallId: tc.id, tool: tc.name, args: tc.input };
-        }
-
-        const toolResults: Array<{ toolCallId: string; name: string; result: string; isError?: boolean }> = [];
-        for (const tc of finalToolCalls) {
-          const result = await this.toolExecutor.execute(tc.name, tc.input);
-          yield {
-            type: "tool-result",
-            toolCallId: tc.id,
-            tool: tc.name,
-            result: result.error || result.result,
-            success: result.success,
-            error: result.error,
-          };
-          toolResults.push({
-            toolCallId: tc.id,
-            name: tc.name,
-            result: result.error || result.result,
-            isError: !result.success,
-          });
-        }
-        this.context.addToolResults(toolResults);
       }
-    } finally {
       this.running = false;
       this.abortController = null;
       this.toolExecutor.setAbortSignal(null);
     }
-  }
-
-  isRunning(): boolean {
-    return this.running;
-  }
-
-  cleanup() {
-    this.abort();
-    this.browserManager.cleanup();
   }
 }

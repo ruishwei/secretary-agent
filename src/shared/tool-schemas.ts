@@ -530,6 +530,31 @@ export const SESSION_SEARCH: ToolDefinition = {
   },
 };
 
+export const BROWSER_TODO_WRITE: ToolDefinition = {
+  name: "browser_todo_write",
+  description:
+    "Create and manage a task list for your current browsing session. Use this to plan multi-step tasks and track progress. Items with status 'completed' will show as checked off with strikethrough.",
+  input_schema: {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        description: "The full list of plan items (replaces previous list).",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "string", description: "Unique identifier (e.g., '1', 'search')" },
+            text: { type: "string", description: "Task description" },
+            status: { type: "string", enum: ["pending", "in_progress", "completed"] },
+          },
+          required: ["id", "text", "status"],
+        },
+      },
+    },
+    required: ["items"],
+  },
+};
+
 // ===== Tool Collections =====
 
 export const BROWSER_TOOLS: ToolDefinition[] = [
@@ -551,6 +576,7 @@ export const BROWSER_TOOLS: ToolDefinition[] = [
   BROWSER_CLOSE_TAB,
   BROWSER_SWITCH_TAB,
   BROWSER_LIST_TABS,
+  BROWSER_TODO_WRITE,
 ];
 
 export const SKILL_TOOLS: ToolDefinition[] = [

@@ -34,6 +34,7 @@ export interface LLMContentBlock {
 export interface LLMResponse {
   type: "text" | "tool_use" | "mixed";
   text?: string;
+  thinkingText?: string;  // Streaming thinking content (real-time deltas)
   toolCalls?: LLMToolCall[];
   thinkingBlocks?: Array<{ thinking: string; signature?: string }>;
   stopReason: string;
@@ -97,15 +98,25 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
       }
     } else {
       const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
+      let reasoningContent = "";
       for (const block of m.content) {
         if (block.type === "text" && block.text) {
           parts.push({ type: "text", text: block.text });
         } else if (block.type === "thinking") {
-          // DeepSeek thinking blocks — must be passed back verbatim
-          const thinkingBlock: Record<string, unknown> = { type: "thinking", thinking: block.thinking };
-          if (block.signature) thinkingBlock.signature = block.signature;
-          result.push({ role: m.role, content: thinkingBlock as any } as any);
+          // DeepSeek: pass thinking back as reasoning_content at message level,
+          // or inline in the content array. Using reasoning_content is preferred.
+          reasoningContent += block.thinking;
+          // Also include inline for providers that expect it in content
+          parts.push({ type: "thinking", thinking: block.thinking } as any);
         } else if (block.type === "tool_use") {
+          // Flush accumulated text+thinking before tool_use
+          if (parts.length > 0) {
+            const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+            if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
+            result.push(msg as any);
+            parts.length = 0;
+            reasoningContent = "";
+          }
           result.push({
             role: "assistant",
             tool_calls: [
@@ -117,6 +128,14 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
             ],
           });
         } else if (block.type === "tool_result") {
+          // Flush accumulated text+thinking before tool_result
+          if (parts.length > 0) {
+            const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+            if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
+            result.push(msg as any);
+            parts.length = 0;
+            reasoningContent = "";
+          }
           result.push({
             role: "tool",
             tool_call_id: block.tool_use_id!,
@@ -125,8 +144,9 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
         }
       }
       if (parts.length > 0) {
-        // OpenAI SDK has strict typing for message content; use cast
-        result.push({ role: m.role, content: parts } as any);
+        const msg: Record<string, unknown> = { role: m.role, content: parts };
+        if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
+        result.push(msg as any);
       }
     }
   }
@@ -304,6 +324,7 @@ export class LLMClient {
           yield { type: "text", text: currentText, stopReason: "streaming" };
         } else if (event.delta.type === "thinking_delta") {
           currentThinking += event.delta.thinking;
+          yield { type: "text", thinkingText: currentThinking, stopReason: "streaming" };
         } else if (event.delta.type === "signature_delta") {
           thinkingSignature += event.delta.signature;
         } else if (event.delta.type === "input_json_delta") {
@@ -395,12 +416,13 @@ export class LLMClient {
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
 
-      // Capture thinking blocks (DeepSeek)
+      // Capture thinking blocks (DeepSeek) and stream in real-time
       if ((delta as any).thinking) {
         currentThinking += (delta as any).thinking;
         if ((delta as any).signature) {
           thinkingSignature = (delta as any).signature;
         }
+        yield { type: "text", thinkingText: currentThinking, stopReason: "streaming" };
       }
 
       if (delta.content) {

@@ -30,21 +30,32 @@ export function MessageBubble({ message }: Props) {
             : "bg-gray-800 text-gray-100 rounded-bl-sm"
         }`}
       >
-        {/* Thinking blocks (collapsible) */}
-        {message.blocks?.filter((b) => b.type === "thinking").map((block, i) => (
-          <ThinkingSection key={i} thinking={block.thinking} />
-        ))}
-
-        {/* Tool call blocks */}
-        {message.blocks?.filter((b) => b.type === "tool-call").map((block) => (
-          <ToolCallCard
-            key={block.toolCallId}
-            tool={block.tool}
-            args={block.args}
-            status={block.status}
-            result={block.result}
-          />
-        ))}
+        {/* Blocks rendered in natural interleaved order — reasoning → tool → result → reasoning → tool → result */}
+        {message.blocks?.map((block, i) => {
+          switch (block.type) {
+            case "thinking":
+              return (
+                <ThinkingSection
+                  key={i}
+                  thinking={block.thinking}
+                  reasoning={block.reasoning}
+                />
+              );
+            case "tool-call":
+              return (
+                <ToolCallCard
+                  key={block.toolCallId}
+                  tool={block.tool}
+                  args={block.args}
+                  status={block.status}
+                  result={block.result}
+                  durationMs={block.durationMs}
+                />
+              );
+            default:
+              return null;
+          }
+        })}
 
         {/* Markdown text content */}
         {message.content && (
@@ -73,23 +84,64 @@ export function MessageBubble({ message }: Props) {
   );
 }
 
-/** Collapsible thinking section */
-function ThinkingSection({ thinking }: { thinking: string }) {
+/** Collapsible thinking section with streaming reasoning and structured plan display */
+function ThinkingSection({ thinking, reasoning }: { thinking: string; reasoning?: string }) {
   const [open, setOpen] = useState(false);
-  if (!thinking) return null;
+  if (!thinking && !reasoning) return null;
+
+  // Parse numbered/bullet plan items from reasoning for structured display
+  const planLines = (reasoning || thinking)
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  // Detect if content looks like a plan (numbered or bulleted items)
+  const isStructuredPlan = planLines.some(
+    (l) => /^\d+[\.\)]\s/.test(l) || /^[-*•]\s/.test(l) || /^Step\s\d/i.test(l)
+  );
 
   return (
-    <details
-      className="mb-2 text-xs"
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="text-gray-400 cursor-pointer hover:text-gray-300 select-none">
-        {open ? "Hide thinking" : "Show thinking"}
-      </summary>
-      <div className="mt-1 p-2 bg-gray-900/50 rounded border border-gray-700/50 text-gray-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
-        {thinking}
-      </div>
-    </details>
+    <div className="mb-2 text-xs thinking-block">
+      <button
+        className="w-full flex items-center gap-2 text-left cursor-pointer hover:opacity-80 select-none"
+        onClick={() => setOpen(!open)}
+      >
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${
+          reasoning ? "bg-purple-400 animate-pulse" : "bg-gray-500"
+        }`} />
+        <span className="text-gray-400 flex-1 truncate">
+          {open ? "Hide reasoning" : reasoning
+            ? `Reasoning: ${reasoning.replace(/\s+/g, " ").substring(0, 60)}...`
+            : `Plan: ${thinking.replace(/\s+/g, " ").substring(0, 60)}...`}
+        </span>
+        <span className="text-gray-500 text-[10px]">{open ? "-" : "+"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-1 p-2 bg-gray-900/50 rounded border border-gray-700/50 text-gray-400 whitespace-pre-wrap max-h-64 overflow-y-auto">
+          {isStructuredPlan ? (
+            <ul className="space-y-0.5">
+              {planLines.map((line, i) => {
+                const isCompleted = line.startsWith("~") || line.startsWith("[x]");
+                const cleanLine = line.replace(/^[~\[x\]\s]+/, "").trim();
+                return (
+                  <li key={i} className={`flex items-start gap-2 ${isCompleted ? "line-through text-gray-600" : ""}`}>
+                    <span className={`flex-shrink-0 mt-0.5 ${
+                      isCompleted ? "text-green-500" : "text-purple-400"
+                    }`}>
+                      {isCompleted ? "✓" : "○"}
+                    </span>
+                    <span>{cleanLine}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <>{reasoning || thinking}</>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -99,11 +151,13 @@ function ToolCallCard({
   args,
   status,
   result,
+  durationMs,
 }: {
   tool: string;
   args: Record<string, unknown>;
   status: "running" | "success" | "error";
   result?: string;
+  durationMs?: number;
 }) {
   const [expanded, setExpanded] = useState(status === "running");
 
@@ -131,6 +185,11 @@ function ToolCallCard({
           status === "success" ? "bg-green-400" : "bg-red-400"
         }`} />
         <span className="text-gray-300 font-mono font-medium truncate">{tool}</span>
+        {status !== "running" && durationMs != null && (
+          <span className="text-gray-500 text-[10px] ml-2 flex-shrink-0">
+            {(durationMs / 1000).toFixed(1)}s
+          </span>
+        )}
         <span className="ml-auto text-gray-500 text-[10px] flex-shrink-0">
           {expanded ? "-" : "+"}
         </span>

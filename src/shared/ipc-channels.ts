@@ -8,10 +8,14 @@ export const IPC = {
   ABORT_AGENT: "chat:abort-agent",
 
   // Browser
-  BROWSER_ATTACH_WEBVIEW: "browser:attach-webview",
   BROWSER_STATE_CHANGED: "browser:state-changed",
   BROWSER_SCREENSHOT: "browser:screenshot",
   BROWSER_NAVIGATE_TO: "browser:navigate-to",
+  BROWSER_GO_BACK: "browser:go-back",
+  BROWSER_GO_FORWARD: "browser:go-forward",
+  BROWSER_REFRESH: "browser:refresh",
+  BROWSER_STOP: "browser:stop",
+  BROWSER_LAYOUT: "browser:layout",
 
   // Tab management
   TAB_CREATE: "browser:tab-create",

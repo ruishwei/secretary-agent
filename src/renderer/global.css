@@ -56,6 +56,27 @@ webview {
   animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Browser loading progress bar — simulates real browser loading */
+@keyframes loading-bar-progress {
+  0%   { width: 0%; }
+  10%  { width: 15%; }
+  25%  { width: 35%; }
+  40%  { width: 55%; }
+  60%  { width: 72%; }
+  80%  { width: 85%; }
+  100% { width: 90%; }
+}
+
+.loading-bar-start {
+  animation: loading-bar-progress 10s cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+}
+
+.loading-bar-finish {
+  width: 100%;
+  transition: width 0.3s ease-out, opacity 0.4s ease-out;
+  opacity: 0;
+}
+
 /* Markdown content styles */
 .markdown-body {
   line-height: 1.6;

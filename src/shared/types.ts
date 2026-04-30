@@ -32,6 +32,7 @@ export interface TabInfo {
   tabId: string;
   url: string;
   title: string;
+  favicon?: string;
   isActive: boolean;
 }
 
@@ -60,6 +61,7 @@ export interface TextBlock {
 export interface ThinkingBlock {
   type: "thinking";
   thinking: string;
+  reasoning?: string;  // LLM's streaming reasoning content
 }
 
 export interface ToolCallBlock {
@@ -70,6 +72,7 @@ export interface ToolCallBlock {
   status: "running" | "success" | "error";
   result?: string;
   error?: string;
+  durationMs?: number;
 }
 
 export interface ToolResultBlock {
@@ -97,12 +100,14 @@ export type AgentEvent =
   | AgentToolResultEvent
   | AgentResponseEvent
   | AgentReviewRequiredEvent
+  | AgentPlanUpdateEvent
   | AgentErrorEvent
   | AgentDoneEvent;
 
 export interface AgentThinkingEvent {
   type: "thinking";
   plan: string;
+  reasoning?: string;  // LLM's real-time reasoning content (streaming)
   currentStep?: number;
   totalSteps?: number;
 }
@@ -112,6 +117,7 @@ export interface AgentToolStartEvent {
   toolCallId: string;
   tool: string;
   args: Record<string, unknown>;
+  timestamp?: number;
 }
 
 export interface AgentToolResultEvent {
@@ -121,6 +127,7 @@ export interface AgentToolResultEvent {
   result: string;
   success: boolean;
   error?: string;
+  durationMs?: number;
 }
 
 export interface AgentResponseEvent {
@@ -149,12 +156,24 @@ export interface AgentDoneEvent {
   summary: string;
 }
 
+export interface PlanItem {
+  id: string;
+  text: string;
+  status: "pending" | "in_progress" | "completed";
+}
+
+export interface AgentPlanUpdateEvent {
+  type: "plan-update";
+  items: PlanItem[];
+}
+
 // ===== Browser State =====
 
 export interface BrowserState {
   tabId: string;
   url: string;
   title: string;
+  favicon?: string;
   isLoading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;

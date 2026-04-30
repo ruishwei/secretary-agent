@@ -1,4 +1,4 @@
-import { webContents, BrowserWindow } from "electron";
+import { webContents, BrowserWindow, WebContentsView } from "electron";
 import { CDPClient } from "./cdp-client";
 import { AccessibilityTree, type AXSnapshot } from "./accessibility-tree";
 import { Logger } from "../utils/logger";
@@ -8,21 +8,33 @@ const logger = new Logger("Browser");
 export interface PageState {
   url: string;
   title: string;
+  favicon?: string;
   isLoading: boolean;
   canGoBack: boolean;
   canGoForward: boolean;
 }
 
-// ===== TabSession — per-tab CDP connection and page state =====
+export interface BrowserState {
+  tabId: string;
+  url: string;
+  title: string;
+  favicon?: string;
+  isLoading: boolean;
+  canGoBack: boolean;
+  canGoForward: boolean;
+}
+
+// ===== TabSession — per-tab WebContentsView + CDP connection =====
 
 export class TabSession {
   readonly tabId: string;
   readonly cdp: CDPClient;
   readonly axTree: AccessibilityTree;
+  readonly view: WebContentsView;
   url = "about:blank";
   title = "";
+  favicon = "";
   snapshot: AXSnapshot | null = null;
-  webContentsId: number | null = null;
   isLoading = false;
   canGoBack = false;
   canGoForward = false;
@@ -30,42 +42,158 @@ export class TabSession {
   private readyResolve: (() => void) | null = null;
   private cleanupFns: Array<() => void> = [];
   private attached = false;
+  private stateCallback?: (tabId: string, state: Partial<BrowserState>) => void;
 
-  constructor(tabId: string) {
+  private popupCallback?: (tabId: string, url: string, sourceTabId: string) => void;
+
+  constructor(
+    tabId: string,
+    view: WebContentsView,
+    stateCallback?: (tabId: string, state: Partial<BrowserState>) => void,
+    popupCallback?: (tabId: string, url: string, sourceTabId: string) => void,
+  ) {
     this.tabId = tabId;
+    this.view = view;
     this.cdp = new CDPClient();
     this.axTree = new AccessibilityTree(this.cdp);
+    this.stateCallback = stateCallback;
+    this.popupCallback = popupCallback;
     this.readyPromise = new Promise((resolve) => {
       this.readyResolve = resolve;
     });
+    this.setupNavigationListeners();
+  }
+
+  private setupNavigationListeners() {
+    const wc = this.view.webContents;
+
+    // Attach CDP when the page finishes loading for the first time
+    const onFinishLoad = async () => {
+      if (!this.attached) {
+        try {
+          await this.cdp.attach(wc);
+          await this.cdp.enableDomains();
+          this.attached = true;
+
+          // Listen for frame navigations via CDP
+          const unsub = this.cdp.onFrameNavigated((url) => {
+            if (url && !url.startsWith("devtools://")) {
+              this.url = url;
+              logger.info(`[${this.tabId}] Navigated to: ${url}`);
+            }
+          });
+          this.cleanupFns.push(unsub);
+
+          if (this.readyResolve) {
+            this.readyResolve();
+            this.readyResolve = null;
+          }
+          logger.info(`[${this.tabId}] CDP attached`);
+        } catch (err) {
+          logger.error(`[${this.tabId}] CDP attach failed: ${err}`);
+        }
+      }
+    };
+    wc.on("did-finish-load", onFinishLoad);
+
+    // Navigation events — track state and push to renderer
+    wc.on("did-start-loading", () => {
+      this.isLoading = true;
+      this.emitState();
+    });
+
+    wc.on("did-stop-loading", () => {
+      this.isLoading = false;
+      this.emitState();
+    });
+
+    wc.on("did-navigate", (_e, url) => {
+      if (url && !url.startsWith("devtools://")) {
+        this.url = url;
+        this.emitState();
+      }
+    });
+
+    wc.on("did-navigate-in-page", (_e, url) => {
+      if (url) {
+        this.url = url;
+        this.emitState();
+      }
+    });
+
+    wc.on("did-redirect-navigation", (_e, url) => {
+      if (url) {
+        this.url = url;
+        logger.info(`[${this.tabId}] Redirect: ${url}`);
+        this.emitState();
+      }
+    });
+
+    // Track title changes
+    wc.on("page-title-updated", (_e, title) => {
+      this.title = title;
+      this.emitState();
+    });
+
+    // Track favicon
+    wc.on("page-favicon-updated", (_e, favicons) => {
+      if (favicons && favicons.length > 0) {
+        this.favicon = favicons[0];
+        this.emitState();
+      }
+    });
+
+    // Popup / new-window interception
+    wc.setWindowOpenHandler(({ url }) => {
+      if (url && url !== "about:blank" && !url.startsWith("devtools://")) {
+        const newTabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        this.popupCallback?.(newTabId, url, this.tabId);
+      }
+      return { action: "deny" };
+    });
+
+    // Clean up on destroyed
+    wc.on("destroyed", () => {
+      this.cleanup();
+    });
+
+    // After construction, load initial URL
+    wc.loadURL("about:blank");
+  }
+
+  private emitState() {
+    // Read live navigation state from webContents (works for both user and CDP navigations)
+    try {
+      const nh = this.view.webContents.navigationHistory;
+      this.canGoBack = nh.canGoBack();
+      this.canGoForward = nh.canGoForward();
+    } catch {
+      // navigationHistory may not be available immediately
+    }
+    this.stateCallback?.(this.tabId, {
+      url: this.url,
+      title: this.title,
+      favicon: this.favicon,
+      isLoading: this.isLoading,
+      canGoBack: this.canGoBack,
+      canGoForward: this.canGoForward,
+    });
+  }
+
+  /** ID of the underlying webContents (for CDP-based tools). */
+  get webContentsId(): number {
+    return this.view.webContents.id;
+  }
+
+  get webContents() {
+    return this.view.webContents;
   }
 
   waitUntilReady(timeoutMs = 15000): Promise<void> {
     const timeout = new Promise<void>((_, reject) =>
-      setTimeout(() => reject(new Error(`Tab ${this.tabId} timed out waiting for CDP`)), timeoutMs)
+      setTimeout(() => reject(new Error(`Tab ${this.tabId} timed out waiting for CDP`)), timeoutMs),
     );
     return Promise.race([this.readyPromise, timeout]);
-  }
-
-  async attachToWebview(wc: Electron.WebContents): Promise<void> {
-    if (this.attached) return;
-    this.webContentsId = wc.id;
-    await this.cdp.attach(wc);
-    await this.cdp.enableDomains();
-    this.attached = true;
-
-    const unsub = this.cdp.onFrameNavigated((url) => {
-      if (url && !url.startsWith("devtools://")) {
-        this.url = url;
-        logger.info(`[${this.tabId}] Navigated to: ${url}`);
-      }
-    });
-    this.cleanupFns.push(unsub);
-
-    if (this.readyResolve) {
-      this.readyResolve();
-      this.readyResolve = null;
-    }
   }
 
   isReady(): boolean {
@@ -103,6 +231,7 @@ export class TabSession {
     return {
       url: this.url,
       title: this.title,
+      favicon: this.favicon,
       isLoading: this.isLoading,
       canGoBack: this.canGoBack,
       canGoForward: this.canGoForward,
@@ -172,7 +301,9 @@ export class TabSession {
   async scroll(direction: "up" | "down", amount?: number): Promise<void> {
     const pixels = amount || 600;
     const deltaY = direction === "down" ? pixels : -pixels;
-    await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: 400, y: 300, deltaX: 0, deltaY });
+    await this.cdp.send("Input.dispatchMouseEvent", {
+      type: "mouseWheel", x: 400, y: 300, deltaX: 0, deltaY,
+    });
   }
 
   async back(): Promise<AXSnapshot> {
@@ -218,6 +349,40 @@ export class TabSession {
     await this.waitForLoad();
   }
 
+  /** User-initiated navigation (via webContents, updates navigation history properly). */
+  loadURL(url: string): void {
+    let normalizedUrl = url;
+    if (!url.startsWith("http://") && !url.startsWith("https://") && url !== "about:blank") {
+      normalizedUrl = `https://${url}`;
+    }
+    this.url = normalizedUrl;
+    this.view.webContents.loadURL(normalizedUrl);
+  }
+
+  /** UI-initiated reload (via webContents). */
+  reload(): void {
+    this.view.webContents.reload();
+  }
+
+  /** UI-initiated stop. */
+  stop(): void {
+    this.view.webContents.stop();
+  }
+
+  /** UI-initiated goBack via webContents navigation controller. */
+  goBack(): void {
+    if (this.view.webContents.navigationHistory.canGoBack()) {
+      this.view.webContents.navigationHistory.goBack();
+    }
+  }
+
+  /** UI-initiated goForward via webContents navigation controller. */
+  goForward(): void {
+    if (this.view.webContents.navigationHistory.canGoForward()) {
+      this.view.webContents.navigationHistory.goForward();
+    }
+  }
+
   cleanup() {
     this.cleanupFns.forEach((fn) => fn());
     this.cleanupFns = [];
@@ -235,21 +400,103 @@ export class TabSession {
   }
 }
 
-// ===== BrowserManager — multi-tab registry =====
+// ===== BrowserManager — multi-tab registry with WebContentsView =====
 
 export class BrowserManager {
   private sessions = new Map<string, TabSession>();
   private activeTabId: string | null = null;
+  private mainWindow: BrowserWindow | null = null;
+  private layoutBounds = { x: 0, y: 80, width: 800, height: 600 };
+  private statePushCallback?: (state: BrowserState) => void;
+  private popupCallback?: (tabId: string, url: string, sourceTabId: string) => void;
+
+  setMainWindow(win: BrowserWindow) {
+    this.mainWindow = win;
+    // Set initial layout based on window size.
+    // Left panel ≈ 400px. Top chrome: ControlBar(~30) + TabBar(~32) + AddressBar(~28) ≈ 90px.
+    const [w, h] = win.getContentSize();
+    this.layoutBounds = { x: 400, y: 90, width: w - 400, height: h - 90 };
+  }
+
+  setStatePushCallback(cb: (state: BrowserState) => void) {
+    this.statePushCallback = cb;
+  }
+
+  setPopupCallback(cb: (tabId: string, url: string, sourceTabId: string) => void) {
+    this.popupCallback = cb;
+  }
+
+  setLayoutBounds(bounds: { x: number; y: number; width: number; height: number }) {
+    this.layoutBounds = bounds;
+    this.repositionViews();
+  }
+
+  private getStateCallback() {
+    return (tabId: string, state: Partial<BrowserState>) => {
+      this.statePushCallback?.({ tabId, ...state } as BrowserState);
+    };
+  }
+
+  private repositionViews() {
+    for (const [tabId, session] of this.sessions) {
+      if (tabId === this.activeTabId) {
+        session.view.setBounds(this.layoutBounds);
+      } else {
+        session.view.setBounds({ x: -9999, y: -9999, width: 1, height: 1 });
+      }
+    }
+  }
 
   // ---- Tab lifecycle ----
 
-  createTab(tabId: string): TabSession {
-    const session = new TabSession(tabId);
-    this.sessions.set(tabId, session);
-    if (!this.activeTabId) {
-      this.activeTabId = tabId;
+  createTab(tabId?: string, url?: string): TabSession {
+    const id = tabId || `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    // Don't create duplicate tabs
+    if (this.sessions.has(id)) {
+      logger.info(`Tab ${id} already exists, skipping creation`);
+      return this.sessions.get(id)!;
     }
-    logger.info(`Tab created: ${tabId} (total: ${this.sessions.size})`);
+
+    const view = new WebContentsView({
+      webPreferences: {
+        sandbox: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        partition: "persist:browser-sec",
+      },
+    });
+
+    const session = new TabSession(
+      id,
+      view,
+      this.getStateCallback(),
+      (tabId: string, url: string, sourceTabId: string) => {
+        this.popupCallback?.(tabId, url, sourceTabId);
+      },
+    );
+    this.sessions.set(id, session);
+
+    // Add to window
+    if (this.mainWindow) {
+      this.mainWindow.contentView.addChildView(view);
+      if (id === this.activeTabId || !this.activeTabId) {
+        view.setBounds(this.layoutBounds);
+      } else {
+        view.setBounds({ x: -9999, y: -9999, width: 1, height: 1 });
+      }
+    }
+
+    if (!this.activeTabId) {
+      this.activeTabId = id;
+    }
+
+    // Navigate to initial URL if provided
+    if (url && url !== "about:blank") {
+      view.webContents.loadURL(url);
+    }
+
+    logger.info(`Tab created: ${id} (total: ${this.sessions.size})`);
     return session;
   }
 
@@ -260,18 +507,28 @@ export class BrowserManager {
       logger.info(`Cannot close last tab: ${tabId}`);
       return;
     }
+
+    // Remove view from window
+    if (this.mainWindow) {
+      this.mainWindow.contentView.removeChildView(session.view);
+    }
+
     session.cleanup();
     this.sessions.delete(tabId);
+
     if (this.activeTabId === tabId) {
       const remaining = [...this.sessions.keys()];
       this.activeTabId = remaining[0];
+      this.repositionViews();
     }
+
     logger.info(`Tab closed: ${tabId} (remaining: ${this.sessions.size})`);
   }
 
   setActiveTab(tabId: string): void {
     if (this.sessions.has(tabId)) {
       this.activeTabId = tabId;
+      this.repositionViews();
     }
   }
 
@@ -283,13 +540,14 @@ export class BrowserManager {
     return this.sessions.get(tabId);
   }
 
-  getAllTabs(): Array<{ tabId: string; url: string; title: string; isActive: boolean }> {
-    const result: Array<{ tabId: string; url: string; title: string; isActive: boolean }> = [];
+  getAllTabs(): Array<{ tabId: string; url: string; title: string; favicon?: string; isActive: boolean }> {
+    const result: Array<{ tabId: string; url: string; title: string; favicon?: string; isActive: boolean }> = [];
     for (const [tabId, session] of this.sessions) {
       result.push({
         tabId,
         url: session.url,
         title: session.title,
+        favicon: session.favicon || undefined,
         isActive: tabId === this.activeTabId,
       });
     }
@@ -311,7 +569,12 @@ export class BrowserManager {
     return active;
   }
 
-  // ---- Delegation methods (tabId is always optional, defaults to active tab) ----
+  // ---- Delegation methods ----
+
+  /** User-initiated navigation (non-CDP, updates navigation history). */
+  loadURL(url: string, tabId?: string): void {
+    this.resolveSession(tabId).loadURL(url);
+  }
 
   async navigate(url: string, tabId?: string): Promise<{ pageState: PageState; snapshot: AXSnapshot }> {
     return this.resolveSession(tabId).navigate(url);
@@ -365,12 +628,8 @@ export class BrowserManager {
     return this.resolveSession(tabId).refresh();
   }
 
-  // ---- CDP lifecycle (backward compat with existing initialize flow) ----
+  // ---- CDP lifecycle ----
 
-  /**
-   * Wait until the browser is ready (any tab has CDP attached).
-   * @deprecated Use waitUntilReady on a specific TabSession via getSession(tabId).
-   */
   async waitUntilReady(timeoutMs = 15000): Promise<void> {
     const active = this.getActiveSession();
     if (active) {
@@ -380,63 +639,21 @@ export class BrowserManager {
   }
 
   /**
-   * Initialize: find the webview's webContents and attach CDP to the default tab.
-   * @deprecated Use createTab + attachToWebview on individual tabs.
+   * Initialize: wire up the manager. Tab creation is driven by the renderer.
    */
-  async initialize(defaultTabId = "tab-initial"): Promise<void> {
-    logger.info("BrowserManager: looking for webview...");
-    const mainWin = BrowserWindow.getAllWindows()[0];
-    if (!mainWin) {
-      logger.info("BrowserManager: no window yet, will retry on first use");
-      return;
-    }
-
-    const session = this.createTab(defaultTabId);
-
-    const maxAttempts = 30;
-    for (let i = 0; i < maxAttempts; i++) {
-      const allWCs = webContents.getAllWebContents();
-      const webviewWc = allWCs.find((wc) => {
-        return (wc as any).hostWebContents?.id === mainWin.webContents.id;
-      });
-
-      if (webviewWc) {
-        await session.attachToWebview(webviewWc);
-        logger.info(`BrowserManager: attached default tab to webview (webContents ${webviewWc.id})`);
-        return;
-      }
-
-      await this.delay(1000);
-    }
-
-    logger.error("BrowserManager: webview not found after 30s");
+  async initialize(): Promise<void> {
+    logger.info("BrowserManager: initialized with WebContentsView");
   }
 
   /**
-   * Attach CDP to a specific webview for a given tab.
+   * Attach to an externally-created WebContentsView (backward compat, used during migration).
+   * @deprecated Use createTab() instead.
    */
-  async attachToWebview(tabId: string, webContentsId: number): Promise<void> {
-    // Find or create session
-    let session = this.sessions.get(tabId);
-    if (!session) {
-      session = this.createTab(tabId);
-    }
-
-    if (session.webContentsId === webContentsId && session.isReady()) {
-      return; // Already attached
-    }
-
-    if (session.isReady()) {
-      session.cleanup();
-    }
-
-    const wc = webContents.fromId(webContentsId);
-    if (!wc) {
-      throw new Error(`No webContents found for ID ${webContentsId}`);
-    }
-
-    await session.attachToWebview(wc);
-    logger.info(`CDP attached: tab ${tabId} -> webContents ${webContentsId}`);
+  async attachToWebview(tabId: string, _webContentsId: number): Promise<void> {
+    // In the WebContentsView model, tabs are created by the main process.
+    // This method exists only for any remaining callers during migration.
+    logger.warn(`attachToWebview called for ${tabId} — creating tab instead`);
+    this.createTab(tabId);
   }
 
   isReady(): boolean {
@@ -446,6 +663,9 @@ export class BrowserManager {
 
   cleanup() {
     for (const session of this.sessions.values()) {
+      if (this.mainWindow) {
+        this.mainWindow.contentView.removeChildView(session.view);
+      }
       session.cleanup();
     }
     this.sessions.clear();
@@ -458,7 +678,10 @@ export class BrowserManager {
   findTab(match: string): string | null {
     const lower = match.toLowerCase();
     for (const [tabId, session] of this.sessions) {
-      if (session.url.toLowerCase().includes(lower) || session.title.toLowerCase().includes(lower)) {
+      if (
+        session.url.toLowerCase().includes(lower) ||
+        session.title.toLowerCase().includes(lower)
+      ) {
         return tabId;
       }
     }

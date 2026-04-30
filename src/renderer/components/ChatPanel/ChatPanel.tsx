@@ -15,6 +15,7 @@ export function ChatPanel() {
   const addAgentAction = useStore((s) => s.addAgentAction);
   const updateAgentActionResult = useStore((s) => s.updateAgentActionResult);
   const setReviewRequest = useStore((s) => s.setReviewRequest);
+  const setPlanItems = useStore((s) => s.setPlanItems);
   const clearAgentState = useStore((s) => s.clearAgentState);
 
   const [inputValue, setInputValue] = useState("");
@@ -31,20 +32,24 @@ export function ChatPanel() {
     const unsubscribe = window.electronAPI.onAgentEvent((event: any) => {
       switch (event.type) {
         case "thinking":
-          // Show thinking as a collapsible block inside the assistant bubble
-          appendBlockToLastAssistant({
-            type: "thinking",
-            thinking: event.plan ?? "",
-          });
+          // Only create thinking blocks for actual model reasoning, not generic status messages.
+          // Generic status ("Turn k/n", "Waiting...") uses the plan field only.
+          if (event.reasoning) {
+            appendBlockToLastAssistant({
+              type: "thinking",
+              thinking: event.plan ?? "",
+              reasoning: event.reasoning,
+            });
+          }
           break;
 
         case "tool-start":
-          // Show tool call as a card inside the assistant bubble
           addAgentAction({
             toolCallId: event.toolCallId,
             tool: event.tool,
             args: event.args,
             status: "running",
+            startTime: event.timestamp,
           });
           appendBlockToLastAssistant({
             type: "tool-call",
@@ -56,9 +61,8 @@ export function ChatPanel() {
           break;
 
         case "tool-result":
-          // Update the tool call card with the result
           updateAgentActionResult(event.toolCallId, event.result, event.success);
-          updateToolCallBlock(event.toolCallId, event.result, event.success);
+          updateToolCallBlock(event.toolCallId, event.result, event.success, event.durationMs);
           break;
 
         case "response":
@@ -75,6 +79,10 @@ export function ChatPanel() {
             content: event.content,
           });
           setStreaming(false);
+          break;
+
+        case "plan-update":
+          setPlanItems(event.items);
           break;
 
         case "done":
@@ -97,6 +105,7 @@ export function ChatPanel() {
     updateToolCallBlock,
     updateLastAssistantMessage,
     setReviewRequest,
+    setPlanItems,
     setStreaming,
     clearAgentState,
   ]);

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, ipcMain } from "electron";
+import { app, BrowserWindow, session } from "electron";
 import path from "node:path";
 import { registerIpcHandlers } from "./ipc/handlers";
 import { Logger } from "./utils/logger";
@@ -6,6 +6,11 @@ import { Logger } from "./utils/logger";
 const logger = new Logger("Main");
 
 let mainWindow: BrowserWindow | null = null;
+
+/** Exposed for BrowserManager to access the main window. */
+export function getMainWindow(): BrowserWindow | null {
+  return mainWindow;
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -19,7 +24,6 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false, // needed for preload to use Node APIs via contextBridge
-      webviewTag: true, // enable <webview> for embedded browser
     },
   });
 

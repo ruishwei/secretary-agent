@@ -1,9 +1,18 @@
-import { ipcMain, BrowserWindow, webContents } from "electron";
+import { ipcMain, BrowserWindow } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { Logger } from "../utils/logger";
 import { APP_VERSION } from "../../shared/constants";
-import type { AppSettings, AgentEvent } from "../../shared/types";
+import type { AppSettings, AgentEvent, BrowserState } from "../../shared/types";
 import { AgentLoop } from "../agent/agent-loop";
+import { ToolExecutor } from "../agent/tool-executor";
+import { BrowserManager } from "../browser/browser-manager";
+import { BrowserStateProvider } from "../browser/browser-state-provider";
+import { registerBrowserTools } from "../agent/tools/browser/register-browser-tools";
+import { registerSkillTools } from "../agent/tools/skills/register-skill-tools";
+import { registerMemoryTools } from "../agent/tools/memory/register-memory-tools";
+import { SkillManager } from "../skills/skill-manager";
+import { MemoryStore } from "../memory/memory-store";
+import { getConfig } from "../utils/config";
 import { loadSettings, saveSettings } from "../utils/settings-store";
 
 const logger = new Logger("IPC");
@@ -12,7 +21,11 @@ let settings: AppSettings = loadSettings();
 let agentRunning = false;
 let agentLoop: AgentLoop | null = null;
 
-function getMainWindow(): BrowserWindow | null {
+// Module-level browser state (shared between IPC handlers and tools)
+let browserManager: BrowserManager;
+let browserStateProvider: BrowserStateProvider;
+
+function getMainWin(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows();
   return windows.length > 0 ? windows[0] : null;
 }
@@ -23,29 +36,135 @@ function sendAgentEvent(win: BrowserWindow | null, event: AgentEvent) {
   }
 }
 
+function getRendererSender(): (channel: string, data: unknown) => void {
+  return (channel, data) => {
+    const win = getMainWin();
+    if (win) {
+      win.webContents.send(channel as any, data);
+    }
+  };
+}
+
+/** Push tab state to renderer — wired as BrowserManager's state callback. */
+function pushTabState(state: BrowserState) {
+  const win = getMainWin();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.TAB_STATE_CHANGED, state);
+  }
+}
+
 async function initAgentLoop(): Promise<AgentLoop> {
   if (agentLoop) return agentLoop;
 
-  agentLoop = new AgentLoop({
-    llm: {
-      provider: settings.llm.provider,
-      apiKey: settings.llm.apiKey,
-      model: settings.llm.model,
-      maxTokens: settings.llm.maxTokens,
-      baseUrl: settings.llm.baseUrl,
+  // Create browser infrastructure
+  if (!browserManager) {
+    browserManager = new BrowserManager();
+
+    // Wire main window
+    const win = getMainWin();
+    if (win) {
+      browserManager.setMainWindow(win);
+    }
+
+    // Wire state push callback so tab navigation events reach the renderer
+    browserManager.setStatePushCallback(pushTabState);
+
+    // Wire popup callback: create a new tab + notify renderer
+    browserManager.setPopupCallback((tabId, url, sourceTabId) => {
+      browserManager.createTab(tabId, url);
+      browserManager.setActiveTab(tabId);
+      const win = getMainWin();
+      if (win) {
+        win.webContents.send(IPC.BROWSER_POPUP_OPEN, { tabId, url, sourceTabId });
+        win.webContents.send(IPC.TAB_LIST_CHANGED, {
+          tabs: browserManager.getAllTabs(),
+          activeTabId: tabId,
+        });
+      }
+    });
+  }
+  browserStateProvider = new BrowserStateProvider(browserManager);
+
+  // Create tool executor (empty — tools registered after LLM client exists)
+  const toolExecutor = new ToolExecutor();
+
+  // Wire renderer callback on tool executor
+  toolExecutor.setRendererCallback(getRendererSender());
+
+  // Create AgentLoop (creates LLMClient internally)
+  agentLoop = new AgentLoop(
+    {
+      llm: {
+        provider: settings.llm.provider,
+        apiKey: settings.llm.apiKey,
+        model: settings.llm.model,
+        maxTokens: settings.llm.maxTokens,
+        baseUrl: settings.llm.baseUrl,
+      },
     },
+    browserStateProvider,
+    toolExecutor,
+  );
+
+  // Ensure at least one tab exists for the agent
+  if (browserManager.tabCount === 0) {
+    browserManager.createTab("tab-initial");
+  }
+
+  // Now register browser tools with the LLM client from AgentLoop
+  registerBrowserTools(toolExecutor, {
+    browser: browserManager,
+    llmClient: agentLoop.getLLMClient(),
+    sendToRenderer: getRendererSender(),
   });
 
+  // Initialize skill and memory systems
+  const config = getConfig();
+  const skillManager = new SkillManager(config.skillsPath);
+  await skillManager.initialize();
+  const memoryStore = new MemoryStore(config.memoryPath, config.sessionsPath);
+
+  registerSkillTools(toolExecutor, skillManager);
+  registerMemoryTools(toolExecutor, memoryStore);
+
+  agentLoop.setSkillManager(skillManager);
+  agentLoop.setMemoryStore(memoryStore);
+
   await agentLoop.initialize();
-  logger.info("Agent loop initialized");
+  logger.info("Agent loop initialized with skills and memory");
   return agentLoop;
+}
+
+/** Initialize browser and create default tab (called on first message or explicitly). */
+async function initBrowser(): Promise<void> {
+  if (!browserManager) {
+    browserManager = new BrowserManager();
+    const win = getMainWin();
+    if (win) {
+      browserManager.setMainWindow(win);
+    }
+    browserManager.setStatePushCallback(pushTabState);
+    browserManager.setPopupCallback((tabId, url, sourceTabId) => {
+      browserManager.createTab(tabId, url);
+      browserManager.setActiveTab(tabId);
+      const win = getMainWin();
+      if (win) {
+        win.webContents.send(IPC.BROWSER_POPUP_OPEN, { tabId, url, sourceTabId });
+        win.webContents.send(IPC.TAB_LIST_CHANGED, {
+          tabs: browserManager.getAllTabs(),
+          activeTabId: tabId,
+        });
+      }
+    });
+    await browserManager.initialize();
+  }
 }
 
 export function registerIpcHandlers(): void {
   // ===== Chat =====
 
-  ipcMain.handle(IPC.SEND_MESSAGE, async (event, req: { text: string; attachments?: unknown[] }) => {
-    const win = getMainWindow();
+  ipcMain.handle(IPC.SEND_MESSAGE, async (_event, req: { text: string; attachments?: unknown[] }) => {
+    const win = getMainWin();
     logger.info(`Message received: "${req.text.substring(0, 100)}"`);
 
     if (agentRunning) {
@@ -57,6 +176,9 @@ export function registerIpcHandlers(): void {
     }
 
     try {
+      // Ensure browser is initialized before first agent message
+      await initBrowser();
+
       const loop = await initAgentLoop();
 
       if (!settings.llm.apiKey) {
@@ -82,10 +204,6 @@ export function registerIpcHandlers(): void {
 
             if (event.type === "done" || event.type === "error") {
               agentRunning = false;
-            }
-
-            if (event.type === "review-required") {
-              // reviewId is passed back via REVIEW_RESPONSE handler
             }
           }
         } catch (err: any) {
@@ -121,90 +239,110 @@ export function registerIpcHandlers(): void {
     agentRunning = false;
   });
 
-  // ===== Browser =====
-
-  ipcMain.handle(IPC.BROWSER_ATTACH_WEBVIEW, async (_event, payload: { tabId: string; webContentsId: number }) => {
-    logger.info(`Renderer reports webview webContents ${payload.webContentsId} for tab ${payload.tabId}`);
-    try {
-      if (!agentLoop) {
-        agentLoop = new AgentLoop({
-          llm: {
-            provider: settings.llm.provider,
-            apiKey: settings.llm.apiKey,
-            model: settings.llm.model,
-            maxTokens: settings.llm.maxTokens,
-            baseUrl: settings.llm.baseUrl,
-          },
-        });
-        await agentLoop.initialize();
-      }
-      await agentLoop!.attachBrowser(payload.tabId, payload.webContentsId);
-
-      // Intercept window.open / target=_blank at the Chromium level
-      // so they always open as new tabs instead of native OS windows.
-      const wc = webContents.fromId(payload.webContentsId);
-      if (wc) {
-        wc.setWindowOpenHandler(({ url }) => {
-          if (url && url !== "about:blank" && !url.startsWith("devtools://")) {
-            const win = getMainWindow();
-            if (win) {
-              win.webContents.send(IPC.BROWSER_POPUP_OPEN, {
-                tabId: `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                url,
-                sourceTabId: payload.tabId,
-              });
-            }
-          }
-          return { action: "deny" };
-        });
-      }
-    } catch (err: any) {
-      logger.error(`Failed to attach CDP via IPC: ${err.message}`);
-    }
-  });
+  // ===== Browser Navigation =====
 
   ipcMain.handle(IPC.BROWSER_NAVIGATE_TO, async (_event, url: string, tabId?: string) => {
     logger.info(`Navigate to: ${url}${tabId ? ` (tab: ${tabId})` : ""}`);
-    if (agentLoop) {
-      try {
-        const snapshot = await agentLoop.navigateBrowser(url, tabId);
-        const win = getMainWindow();
-        if (win) {
-          win.webContents.send(IPC.BROWSER_STATE_CHANGED, {
-            tabId: tabId || "tab-initial",
-            url: snapshot.pageState.url,
-            title: snapshot.pageState.title,
-            isLoading: false,
-            canGoBack: false,
-            canGoForward: false,
-          });
-        }
-      } catch (err: any) {
-        logger.error(`Navigation failed: ${err.message}`);
+    if (!browserManager) await initBrowser();
+    const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
+    if (session) {
+      session.loadURL(url);
+    }
+  });
+
+  ipcMain.handle(IPC.BROWSER_GO_BACK, async (_event, tabId?: string) => {
+    if (!browserManager) await initBrowser();
+    const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
+    session?.goBack();
+  });
+
+  ipcMain.handle(IPC.BROWSER_GO_FORWARD, async (_event, tabId?: string) => {
+    if (!browserManager) await initBrowser();
+    const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
+    session?.goForward();
+  });
+
+  ipcMain.handle(IPC.BROWSER_REFRESH, async (_event, tabId?: string) => {
+    if (!browserManager) await initBrowser();
+    const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
+    if (session) {
+      if (session.isLoading) {
+        session.stop();
+      } else {
+        session.reload();
       }
     }
+  });
+
+  ipcMain.handle(IPC.BROWSER_STOP, async (_event, tabId?: string) => {
+    if (!browserManager) await initBrowser();
+    const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
+    session?.stop();
+  });
+
+  ipcMain.handle(IPC.BROWSER_LAYOUT, async (_event, bounds: { x: number; y: number; width: number; height: number }) => {
+    if (!browserManager) await initBrowser();
+    browserManager.setLayoutBounds(bounds);
   });
 
   // ===== Tab Management =====
 
-  // Tab creation is renderer-driven — the renderer creates the webview,
-  // then dom-ready fires which triggers attachWebview to create the TabSession.
-  // This handler is a no-op kept for forward compatibility.
-  ipcMain.handle(IPC.TAB_CREATE, async () => {
-    logger.info("Tab create requested (renderer-driven, no-op on main)");
+  ipcMain.handle(IPC.TAB_CREATE, async (_event, url?: string) => {
+    logger.info(`Tab create requested${url ? ` for ${url}` : ""}`);
+    if (!browserManager) {
+      await initBrowser();
+    }
+    const session = browserManager.createTab(undefined, url);
+    // Push tab list update to renderer
+    const win = getMainWin();
+    if (win) {
+      win.webContents.send(IPC.TAB_LIST_CHANGED, {
+        tabs: browserManager.getAllTabs(),
+        activeTabId: session.tabId,
+      });
+      // Also push initial state for the new tab
+      pushTabState({
+        tabId: session.tabId,
+        url: session.url,
+        title: session.title,
+        favicon: session.favicon,
+        isLoading: session.isLoading,
+        canGoBack: session.canGoBack,
+        canGoForward: session.canGoForward,
+      });
+    }
   });
 
   ipcMain.handle(IPC.TAB_CLOSE, async (_event, tabId: string) => {
     logger.info(`Tab close requested: ${tabId}`);
-    if (agentLoop) {
-      agentLoop.browserManager.closeTab(tabId);
+    if (browserManager) {
+      browserManager.closeTab(tabId);
+      const win = getMainWin();
+      if (win) {
+        win.webContents.send(IPC.TAB_LIST_CHANGED, {
+          tabs: browserManager.getAllTabs(),
+          activeTabId: browserManager.getActiveSession()?.tabId || null,
+        });
+      }
     }
   });
 
   ipcMain.handle(IPC.TAB_SWITCH, async (_event, tabId: string) => {
     logger.info(`Tab switch requested: ${tabId}`);
-    if (agentLoop) {
-      agentLoop.browserManager.setActiveTab(tabId);
+    if (browserManager) {
+      browserManager.setActiveTab(tabId);
+      const session = browserManager.getActiveSession();
+      if (session) {
+        pushTabState({
+          tabId: session.tabId,
+          url: session.url,
+          title: session.title,
+          favicon: session.favicon,
+          isLoading: session.isLoading,
+          canGoBack: session.canGoBack,
+          canGoForward: session.canGoForward,
+        });
+      }
     }
   });
 
@@ -218,7 +356,7 @@ export function registerIpcHandlers(): void {
       if (agentLoop && response !== "rejected") {
         const approved = response === "approved" || response === "modified";
         agentRunning = true;
-        const win = getMainWindow();
+        const win = getMainWin();
         (async () => {
           try {
             for await (const event of agentLoop!.resumeAfterReview(reviewId, approved, modifications)) {
@@ -243,7 +381,7 @@ export function registerIpcHandlers(): void {
 
   // ===== Voice =====
 
-  ipcMain.handle(IPC.VOICE_TRANSCRIBE, async (_event, req: { audioData: string; language?: string }) => {
+  ipcMain.handle(IPC.VOICE_TRANSCRIBE, async () => {
     logger.info("Voice transcription requested");
     return {
       text: "",

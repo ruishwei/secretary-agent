@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatMessage, BrowserState, SessionMode, ReviewRequest, AgentEvent, AppSettings, ChatMessageBlock, Tab } from "../../shared/types";
+import type { ChatMessage, BrowserState, SessionMode, ReviewRequest, AgentEvent, AppSettings, ChatMessageBlock, Tab, PlanItem } from "../../shared/types";
 import { DEFAULT_SETTINGS } from "../../shared/types";
 
 // ===== Chat Slice =====
@@ -10,7 +10,7 @@ interface ChatSlice {
   addMessage: (msg: ChatMessage) => void;
   updateLastAssistantMessage: (content: string) => void;
   appendBlockToLastAssistant: (block: ChatMessageBlock) => void;
-  updateToolCallBlock: (toolCallId: string, result: string, success: boolean) => void;
+  updateToolCallBlock: (toolCallId: string, result: string, success: boolean, durationMs?: number) => void;
   setStreaming: (streaming: boolean) => void;
   clearMessages: () => void;
 }
@@ -38,11 +38,13 @@ interface SessionSlice {
   agentThinking: string | null;
   agentActions: AgentAction[];
   reviewRequest: ReviewRequest | null;
+  planItems: PlanItem[];
   setMode: (mode: SessionMode) => void;
   setAgentThinking: (plan: string | null) => void;
   addAgentAction: (action: AgentAction) => void;
   updateAgentActionResult: (toolCallId: string, result: string, success: boolean) => void;
   setReviewRequest: (req: ReviewRequest | null) => void;
+  setPlanItems: (items: PlanItem[]) => void;
   clearAgentState: () => void;
 }
 
@@ -62,6 +64,8 @@ export interface AgentAction {
   status: "running" | "success" | "error";
   result?: string;
   error?: string;
+  startTime?: number;
+  durationMs?: number;
 }
 
 // ===== Combined Store =====
@@ -108,14 +112,14 @@ export const useStore = create<AppStore>((set) => ({
       }
       return { messages: msgs };
     }),
-  updateToolCallBlock: (toolCallId, result, success) =>
+  updateToolCallBlock: (toolCallId, result, success, durationMs?) =>
     set((s) => {
       const msgs = [...s.messages];
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === "assistant" && msgs[i].blocks) {
           const blocks = msgs[i].blocks!.map((b) => {
             if (b.type === "tool-call" && b.toolCallId === toolCallId) {
-              return { ...b, status: success ? "success" as const : "error" as const, result };
+              return { ...b, status: success ? "success" as const : "error" as const, result, durationMs };
             }
             return b;
           });
@@ -160,6 +164,7 @@ export const useStore = create<AppStore>((set) => ({
                 ...t,
                 url: state.url ?? t.url,
                 title: state.title ?? t.title,
+                favicon: state.favicon ?? t.favicon,
                 isLoading: state.isLoading ?? t.isLoading,
                 canGoBack: state.canGoBack ?? t.canGoBack,
                 canGoForward: state.canGoForward ?? t.canGoForward,
@@ -189,6 +194,8 @@ export const useStore = create<AppStore>((set) => ({
       ),
     })),
   setReviewRequest: (req) => set({ reviewRequest: req }),
+  planItems: [],
+  setPlanItems: (items) => set({ planItems: items }),
   clearAgentState: () =>
     set({ agentThinking: null, agentActions: [], isStreaming: false }),
 
