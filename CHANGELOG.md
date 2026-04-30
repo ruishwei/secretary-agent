@@ -147,6 +147,29 @@ Browser Secretary Agent 是一个基于 Electron 的 AI 桌面应用。AI 助手
 
 ---
 
+### v0.1.6 — 2026-04-30 — 操作录制增强：LLM 合成 + AXTree 快照
+
+**重大改进 — 录制数据质量**
+- 注入脚本升级：捕获 `aria-label`、计算 ARIA role、最近标题（h1-h6）、页面标题，生成 agent 可理解的语义元素描述
+- 录制开始/结束时自动抓取 AXTree 全量快照（用于 LLM 理解页面结构）
+- 事件去重优化：600ms 内双击合并、2 秒滚动防抖（仅记录 >30% 位移）、连续滚动自动合并
+- 输入防抖：600ms 输入暂停后记录最终值，避免记录每个按键
+- 噪音过滤：跳过无标签无文本的点击、重复事件指纹去重
+
+**重大改进 — LLM 合成技能**
+- 新增 `synthesizeSkill()`：将原始录制事件构建为结构化合成 prompt，调用 LLM 生成高质量 SKILL.md
+- LLM 合成回调通过 `OperationRecorder.setLLMSynthesisCallback()` 注入（零耦合）
+- 生成的技能包含：Goal 概述、Prerequisites 前置条件、带等待条件的完整 Workflow、实用 Tips
+- 元素描述使用可见标签/role/文本（agent 友好），不再使用 CSS selector
+- 自动识别表单提交点并标注 `browser_request_review`
+
+**改进**
+- `OperationRecorder.start()/stop()` 改为接收 `TabSession`（支持 CDP 快照能力）
+- `generateSkillMarkdown()` 替换为 `buildSynthesisPrompt()`（静态方法，无副作用）
+- `saveAsSkill()` 替换为 `synthesizeSkill()`（异步 LLM 合成 + 保存）
+
+---
+
 ### v0.1.5 — 2026-04-30 — 浏览器技能优化 + 操作录制
 
 **优化 — 技能 DOM-First 策略**

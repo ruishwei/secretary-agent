@@ -141,11 +141,20 @@ async function initAgentLoop(): Promise<AgentLoop> {
   agentLoop.setSkillManager(skillManager);
   agentLoop.setMemoryStore(memoryStore);
 
-  // Initialize operation recorder (decoupled — skill save via callback)
+  // Initialize operation recorder (decoupled — skill save + LLM synthesis via callbacks)
   if (!operationRecorder) {
     operationRecorder = new OperationRecorder();
-    operationRecorder.setSkillCallback(async (name, category, content) => {
+    operationRecorder.setSkillSaveCallback(async (name, category, content) => {
       await skillManager.create(category, name, content);
+    });
+    // Wire LLM synthesis: use the agent's LLM client to convert raw actions into a polished skill
+    operationRecorder.setLLMSynthesisCallback(async (prompt: string) => {
+      const llmClient = agentLoop!.getLLMClient();
+      const response = await llmClient.simpleQuery(
+        "You are a technical writer creating reusable browser automation skills. Produce only the requested SKILL.md content, no preamble.",
+        prompt,
+      );
+      return response;
     });
   }
 
@@ -451,7 +460,7 @@ export function registerIpcHandlers(): void {
     }
 
     try {
-      await operationRecorder.start(session.tabId, session.webContents);
+      await operationRecorder.start(session);
       pushRecordingState({
         isRecording: true,
         startedAt: Date.now(),
@@ -476,22 +485,12 @@ export function registerIpcHandlers(): void {
     }
 
     try {
-      const recordingSession = await operationRecorder.stop(session.webContents);
-
+      const recordingSession = await operationRecorder.stop(session);
       pushRecordingState({ isRecording: false, actionCount: 0 });
 
       if (recordingSession && recordingSession.actions.length > 0) {
-        // Auto-save as a skill from the recorded actions
-        const startUrl = recordingSession.startUrl;
-        const domain = (() => {
-          try { return new URL(startUrl).hostname.replace(/^www\./, "").replace(/\./g, "-"); } catch { return "workflow"; }
-        })();
-        const name = `Recorded: ${domain} workflow`;
-        const result = await operationRecorder.saveAsSkill(
-          name,
-          "recorded",
-          recordingSession,
-        );
+        // Synthesize a polished skill via LLM
+        const result = await operationRecorder.synthesizeSkill(recordingSession);
 
         return {
           success: result.success,
