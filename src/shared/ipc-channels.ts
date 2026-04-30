@@ -42,6 +42,11 @@ export const IPC = {
   GET_SETTINGS: "settings:get",
   UPDATE_SETTINGS: "settings:update",
 
+  // Operation Recording
+  RECORDING_START: "recording:start",
+  RECORDING_STOP: "recording:stop",
+  RECORDING_STATE_CHANGED: "recording:state-changed",
+
   // System
   GET_APP_VERSION: "system:get-version",
 } as const;

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { ChatMessage, BrowserState, SessionMode, ReviewRequest, AgentEvent, AppSettings, ChatMessageBlock, Tab, PlanItem } from "../../shared/types";
+import type { ChatMessage, BrowserState, SessionMode, ReviewRequest, AgentEvent, AppSettings, ChatMessageBlock, Tab, PlanItem, RecordingState } from "../../shared/types";
 import { DEFAULT_SETTINGS } from "../../shared/types";
 
 // ===== Chat Slice =====
@@ -48,6 +48,13 @@ interface SessionSlice {
   clearAgentState: () => void;
 }
 
+// ===== Recording Slice =====
+
+interface RecordingSlice {
+  recordingState: RecordingState;
+  setRecordingState: (state: RecordingState) => void;
+}
+
 // ===== Settings Slice =====
 
 interface SettingsSlice {
@@ -70,7 +77,7 @@ export interface AgentAction {
 
 // ===== Combined Store =====
 
-export type AppStore = ChatSlice & BrowserSlice & SessionSlice & SettingsSlice;
+export type AppStore = ChatSlice & BrowserSlice & SessionSlice & RecordingSlice & SettingsSlice;
 
 export const useStore = create<AppStore>((set) => ({
   // Chat slice defaults
@@ -198,6 +205,10 @@ export const useStore = create<AppStore>((set) => ({
   setPlanItems: (items) => set({ planItems: items }),
   clearAgentState: () =>
     set({ agentThinking: null, agentActions: [], isStreaming: false }),
+
+  // Recording slice defaults
+  recordingState: { isRecording: false, actionCount: 0 },
+  setRecordingState: (state) => set({ recordingState: state }),
 
   // Settings slice defaults
   settings: DEFAULT_SETTINGS,

@@ -4,6 +4,8 @@ import { useStore } from "../../store";
 export function AddressBar() {
   const tabs = useStore((s) => s.tabs);
   const activeTabId = useStore((s) => s.activeTabId);
+  const recordingState = useStore((s) => s.recordingState);
+  const setRecordingState = useStore((s) => s.setRecordingState);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const [urlInput, setUrlInput] = useState(activeTab?.url || "");
@@ -13,6 +15,14 @@ export function AddressBar() {
       setUrlInput(activeTab.url || "");
     }
   }, [activeTab?.url]);
+
+  // Listen for recording state changes from main process
+  useEffect(() => {
+    const unsub = window.electronAPI?.onRecordingStateChanged((state) => {
+      setRecordingState(state);
+    });
+    return () => unsub?.();
+  }, [setRecordingState]);
 
   const handleNavigate = () => {
     const url = urlInput.trim();
@@ -44,9 +54,18 @@ export function AddressBar() {
     }
   };
 
+  const handleToggleRecord = () => {
+    if (recordingState.isRecording) {
+      window.electronAPI?.stopRecording();
+    } else {
+      window.electronAPI?.startRecording();
+    }
+  };
+
   const isLoading = activeTab?.isLoading;
   const canGoBack = activeTab?.canGoBack;
   const canGoForward = activeTab?.canGoForward;
+  const isRecording = recordingState.isRecording;
 
   const btnBase = "px-1.5 py-0.5 text-sm rounded transition-colors";
   const btnActive = "text-gray-400 hover:text-gray-100 hover:bg-gray-800";
@@ -94,6 +113,20 @@ export function AddressBar() {
         placeholder="Enter URL and press Enter..."
         spellCheck={false}
       />
+
+      {/* Record button */}
+      <button
+        onClick={handleToggleRecord}
+        className={`flex items-center gap-1 px-2 py-0.5 text-xs rounded transition-colors flex-shrink-0 ${
+          isRecording
+            ? "bg-red-900/60 text-red-300 border border-red-600 hover:bg-red-900"
+            : "text-gray-500 hover:text-gray-300 hover:bg-gray-800"
+        }`}
+        title={isRecording ? "Stop recording" : "Record browser actions"}
+      >
+        <span className={`w-2 h-2 rounded-full ${isRecording ? "bg-red-500 animate-pulse" : "bg-gray-500"}`} />
+        {isRecording ? `Recording (${recordingState.actionCount})` : "Record"}
+      </button>
 
       {isLoading && (
         <div className="w-3 h-3 border border-blue-400 border-t-transparent rounded-full animate-spin flex-shrink-0" />

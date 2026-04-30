@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from "electron";
 import { IPC } from "../../shared/ipc-channels";
 import { Logger } from "../utils/logger";
 import { APP_VERSION } from "../../shared/constants";
-import type { AppSettings, AgentEvent, BrowserState } from "../../shared/types";
+import type { AppSettings, AgentEvent, BrowserState, RecordingState } from "../../shared/types";
 import { AgentLoop } from "../agent/agent-loop";
 import { ToolExecutor } from "../agent/tool-executor";
 import { BrowserManager } from "../browser/browser-manager";
@@ -21,9 +21,12 @@ let settings: AppSettings = loadSettings();
 let agentRunning = false;
 let agentLoop: AgentLoop | null = null;
 
+import { OperationRecorder } from "../browser/operation-recorder";
+
 // Module-level browser state (shared between IPC handlers and tools)
 let browserManager: BrowserManager;
 let browserStateProvider: BrowserStateProvider;
+let operationRecorder: OperationRecorder;
 
 function getMainWin(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows();
@@ -50,6 +53,14 @@ function pushTabState(state: BrowserState) {
   const win = getMainWin();
   if (win && !win.isDestroyed()) {
     win.webContents.send(IPC.TAB_STATE_CHANGED, state);
+  }
+}
+
+/** Push recording state to renderer. */
+function pushRecordingState(state: RecordingState) {
+  const win = getMainWin();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.RECORDING_STATE_CHANGED, state);
   }
 }
 
@@ -130,8 +141,16 @@ async function initAgentLoop(): Promise<AgentLoop> {
   agentLoop.setSkillManager(skillManager);
   agentLoop.setMemoryStore(memoryStore);
 
+  // Initialize operation recorder (decoupled — skill save via callback)
+  if (!operationRecorder) {
+    operationRecorder = new OperationRecorder();
+    operationRecorder.setSkillCallback(async (name, category, content) => {
+      await skillManager.create(category, name, content);
+    });
+  }
+
   await agentLoop.initialize();
-  logger.info("Agent loop initialized with skills and memory");
+  logger.info("Agent loop initialized with skills, memory, and recorder");
   return agentLoop;
 }
 
@@ -414,6 +433,78 @@ export function registerIpcHandlers(): void {
     }
 
     logger.info("Settings updated and saved");
+  });
+
+  // ===== Operation Recording =====
+
+  ipcMain.handle(IPC.RECORDING_START, async () => {
+    logger.info("Recording start requested");
+    if (!browserManager) await initBrowser();
+
+    const session = browserManager.getActiveSession();
+    if (!session) {
+      return { success: false, error: "No active tab" };
+    }
+
+    if (!operationRecorder) {
+      operationRecorder = new OperationRecorder();
+    }
+
+    try {
+      await operationRecorder.start(session.tabId, session.webContents);
+      pushRecordingState({
+        isRecording: true,
+        startedAt: Date.now(),
+        actionCount: 0,
+        tabId: session.tabId,
+      });
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.RECORDING_STOP, async () => {
+    logger.info("Recording stop requested");
+    if (!operationRecorder || !operationRecorder.isRecording) {
+      return { success: false, error: "Not recording" };
+    }
+
+    const session = browserManager?.getActiveSession();
+    if (!session) {
+      return { success: false, error: "No active tab" };
+    }
+
+    try {
+      const recordingSession = await operationRecorder.stop(session.webContents);
+
+      pushRecordingState({ isRecording: false, actionCount: 0 });
+
+      if (recordingSession && recordingSession.actions.length > 0) {
+        // Auto-save as a skill from the recorded actions
+        const startUrl = recordingSession.startUrl;
+        const domain = (() => {
+          try { return new URL(startUrl).hostname.replace(/^www\./, "").replace(/\./g, "-"); } catch { return "workflow"; }
+        })();
+        const name = `Recorded: ${domain} workflow`;
+        const result = await operationRecorder.saveAsSkill(
+          name,
+          "recorded",
+          recordingSession,
+        );
+
+        return {
+          success: result.success,
+          actionCount: recordingSession.actions.length,
+          skillName: result.success ? result.skillName : undefined,
+          error: result.error,
+        };
+      }
+
+      return { success: true, actionCount: 0 };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 
   // ===== System =====

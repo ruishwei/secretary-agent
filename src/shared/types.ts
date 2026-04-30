@@ -235,6 +235,29 @@ export interface AppSettings {
   };
 }
 
+// ===== Operation Recording =====
+
+export interface RecordedAction {
+  type: "navigate" | "click" | "input" | "select" | "scroll" | "submit";
+  timestamp: number;
+  url?: string;
+  selector?: string;
+  tagName?: string;
+  textContent?: string;
+  fieldLabel?: string;
+  fieldName?: string;
+  inputType?: string;
+  value?: string;
+  direction?: string;
+}
+
+export interface RecordingState {
+  isRecording: boolean;
+  startedAt?: number;
+  actionCount: number;
+  tabId?: string;
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   llm: {
     provider: "anthropic",

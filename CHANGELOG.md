@@ -147,6 +147,27 @@ Browser Secretary Agent 是一个基于 Electron 的 AI 桌面应用。AI 助手
 
 ---
 
+### v0.1.5 — 2026-04-30 — 浏览器技能优化 + 操作录制
+
+**优化 — 技能 DOM-First 策略**
+- `data-extraction` 技能更新至 v1.1.0：明确 DOM-first 三级策略（snapshot+extract → 手动交互 → vision 截图兜底）
+- `form-filling` 技能更新至 v1.1.0：明确 DOM-first 策略，增加字段值被清除、自定义组件等故障处理指引
+- 两个技能均新增"Strategy: DOM-First, Vision-Fallback"对照表，仅 canvas 渲染/CAPTCHA 才使用截图
+
+**新增 — 操作录制 (Operation Recorder)**
+- `OperationRecorder` 独立类（`src/main/browser/operation-recorder.ts`）：与 agent/skill/memory 系统零耦合
+- 录制按钮集成到 AddressBar：红色脉冲指示器 + 实时操作计数
+- 注入轻量 DOM 监听脚本（click/input/change/submit/scroll），通过 `webContents.executeJavaScript()` 完成注入和回收
+- 停止录制时自动生成 SKILL.md（含 YAML frontmatter + 自然语言步骤），通过回调写入 SkillManager
+- 新增 IPC 通道 `recording:start` / `recording:stop` / `recording:state-changed`
+- Store 新增 `RecordingSlice`（`recordingState` + `setRecordingState`）
+
+**设计原则**
+- 操作录制器完全自包含，通过回调与 SkillManager 交互，不 import 任何 agent 模块
+- 录制脚本为内联字符串常量，无外部文件依赖
+
+---
+
 ### v0.1.0 — 2026-04-27 — 初始版本
 
 **Phase 1 + 2 完整实现**

@@ -10,6 +10,7 @@ import type {
   VoiceResult,
   AppSettings,
   TabInfo,
+  RecordingState,
 } from "../shared/types";
 
 /**
@@ -101,6 +102,17 @@ const electronAPI = {
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(IPC.GET_SETTINGS),
   updateSettings: (settings: Partial<AppSettings>): Promise<void> =>
     ipcRenderer.invoke(IPC.UPDATE_SETTINGS, settings),
+
+  // Operation Recording
+  startRecording: (): Promise<void> => ipcRenderer.invoke(IPC.RECORDING_START),
+
+  stopRecording: (): Promise<void> => ipcRenderer.invoke(IPC.RECORDING_STOP),
+
+  onRecordingStateChanged: (callback: (state: RecordingState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: RecordingState) => callback(data);
+    ipcRenderer.on(IPC.RECORDING_STATE_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.RECORDING_STATE_CHANGED, handler);
+  },
 
   // System
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(IPC.GET_APP_VERSION),
