@@ -9,15 +9,12 @@ export function TabBar() {
   const handleClose = (e: React.MouseEvent, tabId: string) => {
     e.stopPropagation();
     if (tabs.length <= 1) return;
-    // Notify main process — store will be synced via onTabListChanged
     if (window.electronAPI?.closeTab) {
       window.electronAPI.closeTab(tabId);
     }
   };
 
   const handleNewTab = () => {
-    // Request main process to create a WebContentsView-backed tab.
-    // The renderer store will be updated via onTabListChanged IPC event.
     if (window.electronAPI?.createTab) {
       window.electronAPI.createTab();
     }
@@ -26,6 +23,7 @@ export function TabBar() {
   return (
     <div className="flex items-center bg-gray-900 border-b border-gray-700 overflow-x-auto select-none flex-shrink-0">
       <div className="flex flex-1 min-w-0">
+        {/* Browser tabs */}
         {tabs.map((tab) => {
           const isActive = tab.id === activeTabId;
           return (

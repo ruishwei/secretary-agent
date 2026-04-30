@@ -330,6 +330,11 @@ export function registerIpcHandlers(): void {
     browserManager.setLayoutBounds(bounds);
   });
 
+  ipcMain.handle(IPC.BROWSER_SET_VISIBLE, async (_event, visible: boolean) => {
+    if (!browserManager) await initBrowser();
+    browserManager.setVisible(visible);
+  });
+
   // ===== Tab Management =====
 
   ipcMain.handle(IPC.TAB_CREATE, async (_event, url?: string) => {

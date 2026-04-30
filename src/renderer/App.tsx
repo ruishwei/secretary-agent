@@ -1,18 +1,18 @@
 import React, { useEffect, useState } from "react";
-import { RightPanel } from "./components/RightPanel/RightPanel";
+import { ChatPanel } from "./components/ChatPanel/ChatPanel";
 import { BrowserView } from "./components/BrowserView/BrowserView";
 import { TabBar } from "./components/BrowserView/TabBar";
 import { AddressBar } from "./components/BrowserView/AddressBar";
-import { ControlBar } from "./components/ControlBar/ControlBar";
+import { AgentThinking } from "./components/AgentThinking/AgentThinking";
 import { ReviewDialog } from "./components/ReviewDialog/ReviewDialog";
+import { SettingsLayout } from "./components/Settings/SettingsLayout";
 import { useSession } from "./hooks/useSession";
 import { useStore } from "./store";
-import type { RightPanelTab } from "./components/RightPanel/RightPanelHeader";
 
 export default function App() {
   const { reviewRequest, handleReviewResponse } = useSession();
-  const [rightPanelTab, setRightPanelTab] = useState<RightPanelTab>("chat");
   const updateSettings = useStore((s) => s.updateSettings);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Load persisted settings from main process on startup
   useEffect(() => {
@@ -23,37 +23,44 @@ export default function App() {
     }
   }, [updateSettings]);
 
+  // Hide native WebContentsView when settings modal is open (native views overlay CSS)
+  useEffect(() => {
+    window.electronAPI?.setBrowserVisible(!settingsOpen);
+  }, [settingsOpen]);
+
   return (
-    <div className="flex flex-col h-screen">
-      {/* Control Bar — top strip */}
-      <ControlBar onOpenSettings={() => setRightPanelTab("settings")} />
+    <div className="flex h-screen overflow-hidden">
+      {/* Left Panel — Chat */}
+      <div className="w-[400px] min-w-[320px] flex flex-col border-r border-gray-800">
+        <AgentThinking />
+        <ChatPanel onSettingsClick={() => setSettingsOpen(true)} />
+      </div>
 
-      {/* Main Content Area */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left Panel — Multi-Tab Browser */}
-        <div className="flex-1 flex flex-col">
-          <TabBar />
-          <AddressBar />
-          <div className="flex-1 relative">
-            <BrowserView />
-          </div>
-        </div>
-
-        {/* Right Panel — Chat + Settings (tabbed) */}
-        <div className="w-[400px] min-w-[320px] flex flex-col border-l border-gray-800">
-          <RightPanel
-            activeTab={rightPanelTab}
-            onTabChange={setRightPanelTab}
-          />
+      {/* Right Panel — Browser */}
+      <div className="flex-1 flex flex-col">
+        <TabBar />
+        <AddressBar />
+        <div className="flex-1 relative">
+          <BrowserView />
         </div>
       </div>
 
       {/* Review Dialog Modal */}
       {reviewRequest && (
-        <ReviewDialog
-          review={reviewRequest}
-          onResponse={handleReviewResponse}
-        />
+        <ReviewDialog review={reviewRequest} onResponse={handleReviewResponse} />
+      )}
+
+      {/* Settings Modal */}
+      {settingsOpen && (
+        <div className="fixed inset-0 z-50 bg-gray-950 flex">
+          <SettingsLayout />
+          <button
+            onClick={() => setSettingsOpen(false)}
+            className="absolute top-3 right-3 text-gray-400 hover:text-gray-200 text-lg leading-none z-10"
+          >
+            ×
+          </button>
+        </div>
       )}
     </div>
   );

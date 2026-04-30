@@ -9,6 +9,7 @@ import { SettingsLanguage } from "./SettingsLanguage";
 import { SettingsMemory } from "./SettingsMemory";
 import { SettingsSkills } from "./SettingsSkills";
 import { SettingsWorkspace } from "./SettingsWorkspace";
+import { SettingsShortcuts } from "./SettingsShortcuts";
 import type { AppSettings } from "../../../shared/types";
 
 export function SettingsLayout() {
@@ -33,6 +34,8 @@ export function SettingsLayout() {
         return <SettingsPrivacy />;
       case "language":
         return <SettingsLanguage />;
+      case "shortcuts":
+        return <SettingsShortcuts />;
       case "memory":
         return <SettingsMemory />;
       case "skills":

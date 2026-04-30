@@ -4,7 +4,11 @@ import type { ChatMessage } from "../../../shared/types";
 import { MessageBubble } from "./MessageBubble";
 import { InputBar } from "./InputBar";
 
-export function ChatPanel() {
+interface ChatPanelProps {
+  onSettingsClick: () => void;
+}
+
+export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
   const messages = useStore((s) => s.messages);
   const isStreaming = useStore((s) => s.isStreaming);
   const addMessage = useStore((s) => s.addMessage);
@@ -187,6 +191,7 @@ export function ChatPanel() {
         onSend={handleSend}
         onAbort={handleAbort}
         isStreaming={isStreaming}
+        onSettingsClick={onSettingsClick}
       />
     </div>
   );

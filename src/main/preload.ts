@@ -66,6 +66,9 @@ const electronAPI = {
   updateBrowserLayout: (bounds: { x: number; y: number; width: number; height: number }): Promise<void> =>
     ipcRenderer.invoke(IPC.BROWSER_LAYOUT, bounds),
 
+  setBrowserVisible: (visible: boolean): Promise<void> =>
+    ipcRenderer.invoke(IPC.BROWSER_SET_VISIBLE, visible),
+
   // Tab management
   createTab: (url?: string): Promise<void> =>
     ipcRenderer.invoke(IPC.TAB_CREATE, url),

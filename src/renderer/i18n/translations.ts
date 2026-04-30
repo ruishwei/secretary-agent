@@ -10,6 +10,7 @@ const translations: Record<string, Record<string, string>> = {
     "settings.nav.language": "Language",
     "settings.nav.memory": "Memory",
     "settings.nav.skills": "Skills",
+    "settings.nav.shortcuts": "Shortcuts",
     "settings.nav.workspace": "Workspace",
 
     "settings.llm.provider": "Provider",
@@ -66,6 +67,10 @@ const translations: Record<string, Record<string, string>> = {
     "settings.workspace.sessionsPath": "Sessions Path",
     "settings.workspace.openFolder": "Open Folder",
 
+    "settings.shortcuts.title": "Keyboard Shortcuts",
+    "settings.shortcuts.voiceInput": "Voice Input",
+    "settings.shortcuts.recordHint": "Click the input and press your desired key combination, then press Enter to confirm.",
+
     "common.save": "Save",
     "common.cancel": "Cancel",
     "common.delete": "Delete",
@@ -84,6 +89,7 @@ const translations: Record<string, Record<string, string>> = {
     "settings.nav.language": "语言",
     "settings.nav.memory": "记忆",
     "settings.nav.skills": "技能",
+    "settings.nav.shortcuts": "快捷键",
     "settings.nav.workspace": "工作区",
 
     "settings.llm.provider": "服务商",
@@ -139,6 +145,10 @@ const translations: Record<string, Record<string, string>> = {
     "settings.workspace.memoryPath": "记忆路径",
     "settings.workspace.sessionsPath": "会话路径",
     "settings.workspace.openFolder": "打开文件夹",
+
+    "settings.shortcuts.title": "快捷键设置",
+    "settings.shortcuts.voiceInput": "语音输入",
+    "settings.shortcuts.recordHint": "点击输入框后按下你想要的组合键，然后按回车确认。",
 
     "common.save": "保存",
     "common.cancel": "取消",

@@ -2,7 +2,7 @@ import React from "react";
 import { useI18n } from "../../i18n/useI18n";
 
 const SECTIONS = [
-  "llm", "voice", "browser", "privacy", "language", "memory", "skills", "workspace",
+  "llm", "voice", "browser", "privacy", "language", "shortcuts", "memory", "skills", "workspace",
 ] as const;
 
 export type SettingsSection = (typeof SECTIONS)[number];

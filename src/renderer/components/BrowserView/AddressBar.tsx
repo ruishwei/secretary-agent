@@ -29,7 +29,8 @@ export function AddressBar() {
 
   const handleNavigate = () => {
     const url = urlInput.trim();
-    if (!url || !activeTabId) return;
+    if (!url) return;
+    if (!activeTabId) return;
     window.electronAPI?.navigateTo(url, activeTabId);
   };
 
@@ -83,8 +84,8 @@ export function AddressBar() {
   };
 
   const isLoading = activeTab?.isLoading;
-  const canGoBack = activeTab?.canGoBack;
-  const canGoForward = activeTab?.canGoForward;
+  const canGoBack = activeTab?.canGoBack ?? false;
+  const canGoForward = activeTab?.canGoForward ?? false;
   const isRecording = recordingState.isRecording;
 
   const btnBase = "px-1.5 py-0.5 text-sm rounded transition-colors";
@@ -129,7 +130,7 @@ export function AddressBar() {
         value={urlInput}
         onChange={(e) => setUrlInput(e.target.value)}
         onKeyDown={handleKeyDown}
-        className="flex-1 bg-gray-800 text-gray-200 text-xs px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500"
+        className="flex-1 bg-gray-800 text-xs px-2 py-1 rounded outline-none focus:ring-1 focus:ring-blue-500 text-gray-200"
         placeholder="Enter URL and press Enter..."
         spellCheck={false}
       />

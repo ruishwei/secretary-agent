@@ -14,8 +14,6 @@ export function BrowserView() {
   const [loadState, setLoadState] = useState<LoadState>("idle");
 
   // One-time initialization — request browser infrastructure + default tab.
-  // The main process creates the WebContentsView and pushes tab state via
-  // onTabListChanged / onTabStateChanged IPC events.
   useEffect(() => {
     if (initializedRef.current) return;
     initializedRef.current = true;
@@ -42,10 +40,8 @@ export function BrowserView() {
       }
     };
 
-    // Initial measurement (after layout)
     const initialTimer = setTimeout(measureAndPush, 100);
 
-    // Re-measure on resize
     const observer = new ResizeObserver(() => {
       measureAndPush();
     });
@@ -64,8 +60,6 @@ export function BrowserView() {
       const { tabs: tabList, activeTabId: activeId } = data;
       const currentTabs = useStore.getState().tabs;
 
-      // Build new tab list: preserve existing tabs, add new ones
-      const currentIds = new Set(currentTabs.map((t) => t.id));
       const syncedTabs = tabList.map((t) => {
         const existing = currentTabs.find((st) => st.id === t.tabId);
         if (existing) return existing;
@@ -81,10 +75,8 @@ export function BrowserView() {
         };
       });
 
-      // Batch update store without flipping activeTabId per addTab
       useStore.setState({ tabs: syncedTabs, activeTabId: activeId || useStore.getState().activeTabId });
 
-      // Sync active tab to main process
       if (activeId) {
         window.electronAPI?.switchTab(activeId);
       }
@@ -125,8 +117,6 @@ export function BrowserView() {
   }, [updateTab]);
 
   // Listen for popup interception from main process.
-  // Tab creation is handled by the onTabListChanged sync handler;
-  // this event exists for any additional UI feedback (toast, etc.).
   useEffect(() => {
     if (!window.electronAPI?.onPopupOpen) return;
     const unsubscribe = window.electronAPI.onPopupOpen((_data) => {
@@ -163,9 +153,6 @@ export function BrowserView() {
       {isStreaming && (
         <div className="absolute inset-0 z-10 bg-transparent cursor-not-allowed" />
       )}
-
-      {/* WebContentsView is rendered by main process in this area.
-           The container ref above is used to measure bounds. */}
     </div>
   );
 }

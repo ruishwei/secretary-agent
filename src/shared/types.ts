@@ -234,6 +234,9 @@ export interface AppSettings {
     autoApproveDomains: string[];
   };
   language: "zh-CN" | "en";
+  shortcuts: {
+    voiceInput: string;
+  };
   privacy: {
     autoFillEnabled: boolean;
   };
@@ -318,6 +321,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoApproveDomains: [],
   },
   language: "zh-CN",
+  shortcuts: {
+    voiceInput: "Ctrl+D",
+  },
   privacy: {
     autoFillEnabled: false,
   },

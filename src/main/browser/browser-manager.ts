@@ -407,16 +407,17 @@ export class BrowserManager {
   private activeTabId: string | null = null;
   private mainWindow: BrowserWindow | null = null;
   private layoutBounds = { x: 0, y: 80, width: 800, height: 600 };
+  private visible = true;
   private statePushCallback?: (state: BrowserState) => void;
   private popupCallback?: (tabId: string, url: string, sourceTabId: string) => void;
 
   setMainWindow(win: BrowserWindow) {
     this.mainWindow = win;
     // Set initial layout based on window size.
-    // Right panel ≈ 400px (on right). Browser starts at x=0.
-    // Top chrome: ControlBar(~30) + TabBar(~32) + AddressBar(~28) ≈ 90px.
+    // Left panel (chat) ≈ 400px. Browser starts at x=400.
+    // Top chrome: TabBar(~32) + AddressBar(~28) ≈ 60px. Actual measurement via ResizeObserver.
     const [w, h] = win.getContentSize();
-    this.layoutBounds = { x: 0, y: 90, width: w - 400, height: h - 90 };
+    this.layoutBounds = { x: 400, y: 60, width: w - 400, height: h - 60 };
   }
 
   setStatePushCallback(cb: (state: BrowserState) => void) {
@@ -432,6 +433,12 @@ export class BrowserManager {
     this.repositionViews();
   }
 
+  /** Hide/show all browser views (used when settings modal overlays the browser). */
+  setVisible(visible: boolean) {
+    this.visible = visible;
+    this.repositionViews();
+  }
+
   private getStateCallback() {
     return (tabId: string, state: Partial<BrowserState>) => {
       this.statePushCallback?.({ tabId, ...state } as BrowserState);
@@ -439,11 +446,14 @@ export class BrowserManager {
   }
 
   private repositionViews() {
+    const offscreen = { x: -9999, y: -9999, width: 1, height: 1 };
     for (const [tabId, session] of this.sessions) {
-      if (tabId === this.activeTabId) {
+      if (!this.visible) {
+        session.view.setBounds(offscreen);
+      } else if (tabId === this.activeTabId) {
         session.view.setBounds(this.layoutBounds);
       } else {
-        session.view.setBounds({ x: -9999, y: -9999, width: 1, height: 1 });
+        session.view.setBounds(offscreen);
       }
     }
   }

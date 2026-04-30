@@ -28,6 +28,7 @@ export function loadSettings(): AppSettings {
         browser: { ...DEFAULT_SETTINGS.browser, ...(saved.browser || {}) },
         privacy: { ...DEFAULT_SETTINGS.privacy, ...(saved.privacy || {}) },
         workspace: { ...DEFAULT_SETTINGS.workspace, ...(saved.workspace || {}) },
+        shortcuts: { ...DEFAULT_SETTINGS.shortcuts, ...(saved.shortcuts || {}) },
         language: saved.language || DEFAULT_SETTINGS.language,
       };
       logger.info("Settings loaded from disk");

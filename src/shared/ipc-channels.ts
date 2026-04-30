@@ -16,6 +16,7 @@ export const IPC = {
   BROWSER_REFRESH: "browser:refresh",
   BROWSER_STOP: "browser:stop",
   BROWSER_LAYOUT: "browser:layout",
+  BROWSER_SET_VISIBLE: "browser:set-visible",
 
   // Tab management
   TAB_CREATE: "browser:tab-create",
