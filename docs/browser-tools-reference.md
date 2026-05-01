@@ -41,7 +41,7 @@
 ### `browser_snapshot`
 **用途：** 获取当前页面的无障碍树文本表示，交互元素带 @ref ID（可通过 `includeRefs=false` 隐藏）
 
-**参数：** `full` (默认 false = depth 6), `includeRefs` (默认 true，设为 false 隐藏 @ref 标记), `tabId` (可选)
+**参数：** `full` (默认 false = depth 6；true = 无深度限制，完整树), `includeRefs` (默认 true), `tabId` (可选)
 
 **潜在问题：**
 - 复杂页面（百度、淘宝）即使 `full: false` 也可能产生大量文本（5K+）
