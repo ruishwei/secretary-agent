@@ -8,11 +8,12 @@ export function executeBrowserSnapshot(browser: BrowserManager): ToolHandler {
     async execute(args) {
       const full = args.full === true;
       const tabId = args.tabId as string | undefined;
-      const snapshot = await browser.getSnapshot(full, tabId);
+      const includeRefs = args.includeRefs !== false; // default true
+      const snapshot = await browser.getSnapshot(full, tabId, includeRefs);
       const elementCount = snapshot.nodes.size;
       return {
         success: true,
-        result: `Page snapshot captured. ${elementCount} interactive elements found.`,
+        result: `Page snapshot captured. ${elementCount} elements found.`,
         snapshot: snapshot.text,
       };
     },

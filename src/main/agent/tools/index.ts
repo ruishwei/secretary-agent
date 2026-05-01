@@ -10,7 +10,6 @@ export {
   executeBrowserGetPageState,
   executeBrowserConsole,
   executeBrowserVision,
-  executeBrowserExtract,
   executeBrowserFillForm,
   executeBrowserRequestReview,
   executeBrowserNewTab,

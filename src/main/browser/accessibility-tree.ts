@@ -75,7 +75,7 @@ export class AccessibilityTree {
   /**
    * Get a full AXTree snapshot with @ref IDs for interactive elements.
    */
-  async snapshot(full = false): Promise<AXSnapshot> {
+  async snapshot(full = false, includeRefs = true): Promise<AXSnapshot> {
     refCounter = 0;
     const result = await this.cdp.send<any>("Accessibility.getFullAXTree", {
       max_depth: full ? 12 : 6,
@@ -102,7 +102,7 @@ export class AccessibilityTree {
 
     // Generate text representation
     const lines: string[] = [];
-    this.renderTree(rootRef, nodes, lines, "", true);
+    this.renderTree(rootRef, nodes, lines, "", true, includeRefs);
 
     return {
       nodes,
@@ -188,7 +188,8 @@ export class AccessibilityTree {
     nodes: Map<string, AXNode>,
     lines: string[],
     indent: string,
-    isRoot: boolean
+    isRoot: boolean,
+    includeRefs = true
   ) {
     const node = nodes.get(ref);
     if (!node) return;
@@ -203,7 +204,7 @@ export class AccessibilityTree {
     // Pass-through containers: skip rendering this node but still recurse into children
     if (PASS_THROUGH_ROLES.has(role) && !name && !isInteractive) {
       for (const childRef of node.children) {
-        this.renderTree(childRef, nodes, lines, indent, false);
+        this.renderTree(childRef, nodes, lines, indent, false, includeRefs);
       }
       return;
     }
@@ -211,15 +212,15 @@ export class AccessibilityTree {
     // Non-meaningful, non-interactive node with no name/value → skip but recurse
     if (!MEANINGFUL_ROLES.has(role) && !isInteractive && !name && !value && hasChildren) {
       for (const childRef of node.children) {
-        this.renderTree(childRef, nodes, lines, indent, false);
+        this.renderTree(childRef, nodes, lines, indent, false, includeRefs);
       }
       return;
     }
 
     let line = indent;
 
-    // Add @ref tag for interactive elements
-    if (isInteractive) {
+    // Add @ref tag for interactive elements (only when includeRefs is true)
+    if (isInteractive && includeRefs) {
       line += `[${ref}] `;
     }
 
@@ -290,7 +291,7 @@ export class AccessibilityTree {
 
     const childIndent = indent + " ";
     for (const childRef of node.children) {
-      this.renderTree(childRef, nodes, lines, childIndent, false);
+      this.renderTree(childRef, nodes, lines, childIndent, false, includeRefs);
     }
   }
 }

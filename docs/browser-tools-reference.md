@@ -7,7 +7,8 @@
 | **browser_vision 截图** | PNG → JPEG quality 70 | 体积缩小 5-10 倍 (1-2MB → 150-300KB)，视觉 AI 文本/UI 识别准确率几乎不受影响 |
 | **browser_snapshot 文本** | 跳过空容器节点 (generic/group/div 等) + 无名称非交互节点；单空格缩进；去除 emoji | 文本输出减少 30-50%，LLM 处理更快 |
 | **browser_get_page_state** | full: true → full: false (depth 6) | 页面摘要只需要统计信息，不需要完整树文本 |
-| **browser_extract** | document.body.innerText + 浅层 AXTree 并行获取 | 纯文本比完整 AXTree 紧凑 10-50 倍，LLM 2-3 秒内完成提取 |
+| **browser_snapshot includeRefs** | 新增参数控制是否显示 @ref 标记 | `includeRefs=false` 获得纯净内容视图，用于内容分析 |
+| **browser_extract** | 已删除 — 功能由 browser_snapshot(includeRefs=false) + browser_console 覆盖 | 减少冗余工具
 | **Post-action 快照** | 所有交互工具 (click/type/scroll/press/wait/back) 默认 full: false | 操作后只需确认变化，不需要深层树 |
 
 ---
@@ -38,15 +39,15 @@
 ## 页面感知
 
 ### `browser_snapshot`
-**用途：** 获取当前页面的无障碍树文本表示，交互元素带 @ref ID
+**用途：** 获取当前页面的无障碍树文本表示，交互元素带 @ref ID（可通过 `includeRefs=false` 隐藏）
 
-**参数：** `full` (是否完整深度，默认 false = depth 6), `tabId` (可选)
+**参数：** `full` (默认 false = depth 6), `includeRefs` (默认 true，设为 false 隐藏 @ref 标记), `tabId` (可选)
 
 **潜在问题：**
 - 复杂页面（百度、淘宝）即使 `full: false` 也可能产生大量文本（5K+）
-- `ignored` 节点在某些页面占大多数（已修复不过滤）
 - @ref ID 是临时的，每次 snapshot 重新分配，不能跨 turn 保存
 - 动态加载内容（无限滚动）可能不在快照中
+- `includeRefs: false` 隐藏 @ref 后无法用 browser_click 等交互工具；需先调 `browser_snapshot(includeRefs: true)` 获取 ref
 
 ### `browser_vision`
 **用途：** 截图后发送给视觉 LLM 分析，用于 CAPTCHA、复杂布局、视觉验证
@@ -55,8 +56,8 @@
 
 **潜在问题：**
 - 依赖 LLM vision API，需模型支持（`supportsVision` 未充分暴露）
-- 截图 base64 体积大（>1MB），网络慢时请求慢
-- 视觉分析不适用于提取大量结构化文本（用 `browser_extract` 更合适）
+- 截图 JPEG quality 70（已优化，~150-300KB）
+- 视觉分析不适用于提取大量结构化文本（用 `browser_snapshot(includeRefs: false)` 或 `browser_console`）
 - 无法"看到"滚动区域外的内容
 
 ### `browser_console`
@@ -69,17 +70,6 @@
 - 如果 expression 抛异常，返回 `Error: {...}` 字符串但标记 `success: true`
 - 无 expression 时返回 console 日志，但日志上限不明确
 - 执行大计算量的 JS 可能阻塞页面渲染
-
-### `browser_extract`
-**用途：** 用 LLM 从页面提取结构化数据（"所有文章标题"、"表格数据"等）
-
-**参数：** `what` (必填，描述要提取的数据), `tabId` (可选)
-
-**潜在问题：**
-- 依赖 LLM 单次调用，复杂提取可能超时
-- 页面纯文本 + 浅层 AXTree 合并后截断到 12K，超大页面可能丢失底部内容
-- LLM 返回格式不一定为合法 JSON（prompt 要求了但无格式校验）
-- evaluateJs 获取 `document.body.innerText` 失败时静默降级为空字符串
 
 ### `browser_get_page_state`
 **用途：** 获取页面综合摘要：URL、标题、加载状态、元素数量

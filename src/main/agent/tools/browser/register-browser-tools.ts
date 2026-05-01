@@ -12,7 +12,7 @@ import { executeBrowserWait } from "./browser-wait";
 import { executeBrowserGetPageState } from "./browser-get-page-state";
 import { executeBrowserConsole } from "./browser-console";
 import { executeBrowserVision } from "./browser-vision";
-import { executeBrowserExtract } from "./browser-extract";
+
 import { executeBrowserFillForm } from "./browser-fill-form";
 import { executeBrowserRequestReview } from "./browser-request-review";
 import { executeBrowserNewTab } from "./browser-new-tab";
@@ -44,7 +44,7 @@ export function registerBrowserTools(executor: ToolExecutor, ctx: ToolFactoryCon
     executeBrowserGetPageState(browser),
     executeBrowserConsole(browser),
     executeBrowserVision(browser, llm!),
-    executeBrowserExtract(browser),
+
     executeBrowserFillForm(browser),
     executeBrowserRequestReview(),
     executeBrowserNewTab(browser, (tabId, url) => {

@@ -42,13 +42,17 @@ export const BROWSER_NAVIGATE: ToolDefinition = {
 export const BROWSER_SNAPSHOT: ToolDefinition = {
   name: "browser_snapshot",
   description:
-    "Get a text-based snapshot of the current page's accessibility tree. Returns interactive elements with @ref IDs. Use full=true for complete page content (large pages may be summarized).",
+    "Get a text-based snapshot of the current page's accessibility tree. Interactive elements are marked with @ref IDs by default. Pass includeRefs=false for a clean content view without @ref markers (useful for content analysis). Use full=true for deep tree traversal.",
   input_schema: {
     type: "object",
     properties: {
       full: {
         type: "boolean",
         description: "If true, return the full page snapshot. Default false (compact mode).",
+      },
+      includeRefs: {
+        type: "boolean",
+        description: "If false, hide @ref ID markers on interactive elements for a cleaner content view. Default true.",
       },
       ...TAB_ID_PROPERTY,
     },
@@ -170,23 +174,6 @@ export const BROWSER_CONSOLE: ToolDefinition = {
       },
       ...TAB_ID_PROPERTY,
     },
-  },
-};
-
-export const BROWSER_EXTRACT: ToolDefinition = {
-  name: "browser_extract",
-  description:
-    "Collect page content (body text + interactive elements). Returns the page text content and a compact snapshot for the LLM to analyze. Use when you need to extract specific data from the page — the returned content is yours to process, no secondary LLM call is involved.",
-  input_schema: {
-    type: "object",
-    properties: {
-      what: {
-        type: "string",
-        description: "Description of what data to extract from the page.",
-      },
-      ...TAB_ID_PROPERTY,
-    },
-    required: ["what"],
   },
 };
 
@@ -567,7 +554,6 @@ export const BROWSER_TOOLS: ToolDefinition[] = [
   BROWSER_PRESS,
   BROWSER_VISION,
   BROWSER_CONSOLE,
-  BROWSER_EXTRACT,
   BROWSER_FILL_FORM,
   BROWSER_WAIT,
   BROWSER_GET_PAGE_STATE,

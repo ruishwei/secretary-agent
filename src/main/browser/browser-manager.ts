@@ -238,8 +238,8 @@ export class TabSession {
     };
   }
 
-  async getSnapshot(full = false): Promise<AXSnapshot> {
-    const snapshot = await this.axTree.snapshot(full);
+  async getSnapshot(full = false, includeRefs = true): Promise<AXSnapshot> {
+    const snapshot = await this.axTree.snapshot(full, includeRefs);
     this.snapshot = snapshot;
     return snapshot;
   }
@@ -598,8 +598,8 @@ export class BrowserManager {
     return this.resolveSession(tabId).getPageState();
   }
 
-  async getSnapshot(full = false, tabId?: string): Promise<AXSnapshot> {
-    return this.resolveSession(tabId).getSnapshot(full);
+  async getSnapshot(full = false, tabId?: string, includeRefs = true): Promise<AXSnapshot> {
+    return this.resolveSession(tabId).getSnapshot(full, includeRefs);
   }
 
   async clickByRef(ref: string, tabId?: string): Promise<AXSnapshot> {
