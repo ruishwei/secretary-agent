@@ -4,7 +4,7 @@
   "description": "AI-powered browser secretary agent with human-in-the-loop control",
   "main": ".vite/build/index.js",
   "scripts": {
-    "dev": "electron-forge start",
+    "dev": "chcp 65001 > nul && electron-forge start",
     "build": "electron-forge make",
     "package": "electron-forge package",
     "lint": "eslint src/ --ext .ts,.tsx",

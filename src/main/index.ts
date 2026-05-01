@@ -1,7 +1,10 @@
 import { app, BrowserWindow, session } from "electron";
 import path from "node:path";
 import { registerIpcHandlers } from "./ipc/handlers";
-import { Logger } from "./utils/logger";
+import { Logger, setLogDir } from "./utils/logger";
+
+// Initialize log file before any Logger instances are created
+setLogDir(path.join(app.getPath("userData"), "browser-secretary-agent"));
 
 const logger = new Logger("Main");
 

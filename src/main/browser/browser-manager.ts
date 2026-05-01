@@ -257,16 +257,25 @@ export class TabSession {
       const objectId = resolveResult?.object?.objectId;
       if (!objectId) throw new Error(`Could not resolve ${ref} to a DOM node`);
 
-      const boxModel = await this.cdp.send<any>("DOM.getBoxModel", { objectId });
-      if (boxModel?.model?.content) {
-        const quad = boxModel.model.content;
-        const x = (quad[0] + quad[4]) / 2;
-        const y = (quad[1] + quad[5]) / 2;
-        await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
-        await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
-      } else {
-        await this.cdp.send("DOM.focus", { backendNodeId });
-        await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" });
+      // Prefer Runtime.callFunctionOn: dispatches click directly on the element,
+      // bypassing overlay hit-testing (e.g. autocomplete suggestions covering buttons)
+      const callResult = await this.cdp.send<any>("Runtime.callFunctionOn", {
+        functionDeclaration: "function() { this.click(); }",
+        objectId,
+      });
+      // If callFunctionOn threw (not implemented, detached node, etc.), fall back to coordinates
+      if (callResult?.exceptionDetails) {
+        const boxModel = await this.cdp.send<any>("DOM.getBoxModel", { objectId });
+        if (boxModel?.model?.content) {
+          const quad = boxModel.model.content;
+          const x = (quad[0] + quad[4]) / 2;
+          const y = (quad[1] + quad[5]) / 2;
+          await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
+          await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
+        } else {
+          await this.cdp.send("DOM.focus", { backendNodeId });
+          await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" });
+        }
       }
     } catch (err) {
       throw new Error(`Failed to click ${ref}: ${err}`);
@@ -283,13 +292,41 @@ export class TabSession {
     if (!backendNodeId) throw new Error(`Element ${ref} not found.`);
 
     try {
+      // Resolve to objectId so we can call JS directly on the element
+      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", { backendNodeId });
+      const objectId = resolveResult?.object?.objectId;
+      if (!objectId) throw new Error(`Could not resolve ${ref} to a DOM node`);
+
+      // Focus first
       await this.cdp.send("DOM.focus", { backendNodeId });
       await this.delay(100);
-      // Select all + insert text atomically — avoids triggering per-character
-      // auto-suggest / autocomplete that would replace the typed text
-      await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: 2 });
-      await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: 2 });
-      await this.cdp.send("Input.insertText", { text });
+
+      // Use Runtime.callFunctionOn to set value via native setter — bypasses
+      // the page's input event handler chain which can mangle the text (e.g.
+      // Baidu replacing typed text with suggestion content)
+      await this.cdp.send("Runtime.callFunctionOn", {
+        functionDeclaration: `
+          function(text) {
+            // Native value setter — works even for React/Vue controlled inputs
+            const proto = this instanceof HTMLInputElement
+              ? HTMLInputElement.prototype
+              : HTMLTextAreaElement.prototype;
+            const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+            nativeSetter.call(this, text);
+            // Dispatch events so the page framework sees the change
+            this.dispatchEvent(new Event('input', { bubbles: true }));
+            this.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        `,
+        arguments: [{ value: text }],
+        objectId,
+      });
+
+      // Blur + refocus dismisses any autocomplete suggestion dropdown
+      // without triggering page-level Escape handlers (e.g. modals)
+      await this.cdp.send("Runtime.evaluate", { expression: "document.activeElement?.blur()" });
+      await this.delay(50);
+      await this.cdp.send("DOM.focus", { backendNodeId });
     } catch (err) {
       throw new Error(`Failed to type into ${ref}: ${err}`);
     }
@@ -392,9 +429,23 @@ export class TabSession {
     this.attached = false;
   }
 
-  private async waitForLoad(): Promise<void> {
-    await this.cdp.send("Page.stopLoading").catch(() => {});
-    await this.delay(1000);
+  private async waitForLoad(timeoutMs = 15000): Promise<void> {
+    const start = Date.now();
+    while (Date.now() - start < timeoutMs) {
+      try {
+        const result = await this.cdp.send<any>("Runtime.evaluate", {
+          expression: "document.readyState",
+          returnByValue: true,
+        });
+        if (result?.result?.value === "complete") {
+          await this.delay(300); // let post-load JS settle
+          return;
+        }
+      } catch {
+        // DOM may not be ready yet
+      }
+      await this.delay(300);
+    }
   }
 
   private delay(ms: number): Promise<void> {
