@@ -13,7 +13,7 @@ export function executeBrowserSnapshot(browser: BrowserManager): ToolHandler {
       const elementCount = snapshot.nodes.size;
       return {
         success: true,
-        result: `Page snapshot captured. ${elementCount} elements found.`,
+        result: `Page snapshot (${elementCount} elements):\n${snapshot.text}`,
         snapshot: snapshot.text,
       };
     },
