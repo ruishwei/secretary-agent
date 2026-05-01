@@ -11,9 +11,10 @@ export function executeBrowserNavigate(browser: BrowserManager): ToolHandler {
       if (!url) return { success: false, result: "", error: "url is required" };
 
       const { pageState, snapshot } = await browser.navigate(url, tabId);
+      const navigatedTabId = tabId || browser.getActiveSession()?.tabId || "unknown";
       return {
         success: true,
-        result: `Navigated to ${pageState.url}. Title: ${pageState.title}`,
+        result: `Navigated tab [${navigatedTabId}] to ${pageState.url}. Title: ${pageState.title}`,
         snapshot: snapshot.text,
       };
     },

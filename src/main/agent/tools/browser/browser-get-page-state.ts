@@ -9,10 +9,14 @@ export function executeBrowserGetPageState(browser: BrowserManager): ToolHandler
       const tabId = args.tabId as string | undefined;
       const pageState = browser.getPageState(tabId);
       const snapshot = await browser.getSnapshot(false, tabId);
+      const resolvedTabId = tabId || browser.getActiveSession()?.tabId || "unknown";
+      const isActive = !tabId || tabId === browser.getActiveSession()?.tabId;
       return {
         success: true,
         result: JSON.stringify(
           {
+            tabId: resolvedTabId,
+            active: isActive,
             url: pageState.url,
             title: pageState.title,
             isLoading: pageState.isLoading,

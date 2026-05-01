@@ -279,7 +279,8 @@ export const BROWSER_CLOSE_TAB: ToolDefinition = {
 
 export const BROWSER_SWITCH_TAB: ToolDefinition = {
   name: "browser_switch_tab",
-  description: "Switch the active browser tab by its tab ID, or by matching a substring against tab URLs and titles.",
+  description:
+    "Switch the active browser tab by its tab ID, or by matching a substring against tab URLs and titles. IMPORTANT: Only use this when the user explicitly asks to switch tabs, or when a task requires operating on a specific tab. Do NOT switch tabs to 'fix' a perceived inconsistency between your memory and the current page state — the user may have intentionally selected a different tab. If the current page seems unexpected, ask the user before switching.",
   input_schema: {
     type: "object",
     properties: {

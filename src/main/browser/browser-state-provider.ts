@@ -26,10 +26,12 @@ export class BrowserStateProvider implements StateProvider {
 
     // Current page
     if (pageState.url) {
+      const activeSession = this.browserManager.getActiveSession();
+      const tabId = activeSession?.tabId || "";
       sections.push({
         id: "browser:page",
         priority: 20,
-        content: `## Current Page\nURL: ${pageState.url}`,
+        content: `## Current Page\nTab: ${tabId}\nURL: ${pageState.url}\nTitle: ${pageState.title}\n\nThis is the active tab the user is viewing. The user may have switched tabs since your last turn.`,
       });
     }
 
