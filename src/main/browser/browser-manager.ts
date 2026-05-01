@@ -285,12 +285,11 @@ export class TabSession {
     try {
       await this.cdp.send("DOM.focus", { backendNodeId });
       await this.delay(100);
+      // Select all + insert text atomically — avoids triggering per-character
+      // auto-suggest / autocomplete that would replace the typed text
       await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "a", code: "KeyA", modifiers: 2 });
       await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "a", code: "KeyA", modifiers: 2 });
-      for (const char of text) {
-        await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: char, text: char });
-        await this.cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: char });
-      }
+      await this.cdp.send("Input.insertText", { text });
     } catch (err) {
       throw new Error(`Failed to type into ${ref}: ${err}`);
     }
