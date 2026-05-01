@@ -78,7 +78,7 @@ export class AccessibilityTree {
   async snapshot(full = false, includeRefs = true): Promise<AXSnapshot> {
     refCounter = 0;
     const result = await this.cdp.send<any>("Accessibility.getFullAXTree", {
-      max_depth: full ? 12 : 6,
+      max_depth: full ? 24 : 6,
     });
 
     const axNodes = result?.nodes || [];
@@ -128,7 +128,7 @@ export class AccessibilityTree {
     depth: number,
     assignedRef?: string
   ): string | null {
-    if (depth > 16) return null; // Prevent infinite recursion
+    if (depth > 32) return null; // Prevent infinite recursion
 
     const role = (raw.role?.value || "unknown").toLowerCase();
     const name = raw.name?.value || "";
