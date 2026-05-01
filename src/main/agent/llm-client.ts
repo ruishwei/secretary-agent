@@ -99,6 +99,9 @@ function toAnthropicMessages(messages: LLMMessage[]) {
 
 function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
   const result: OpenAI.Chat.ChatCompletionMessageParam[] = [];
+  // DeepSeek requires reasoning_content on ALL subsequent assistant messages
+  // once thinking mode is active. Track the latest reasoning across messages.
+  let lastReasoning = "";
   for (const m of messages) {
     if (m.role === "system") {
       result.push({ role: "system", content: typeof m.content === "string" ? m.content : "" });
@@ -108,7 +111,9 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
       if (m.role === "user") {
         result.push({ role: "user", content: m.content });
       } else {
-        result.push({ role: "assistant", content: m.content });
+        const msg: Record<string, unknown> = { role: "assistant", content: m.content };
+        if (lastReasoning) (msg as any).reasoning_content = lastReasoning;
+        result.push(msg as any);
       }
     } else {
       const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
@@ -117,24 +122,19 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
         if (block.type === "text" && block.text) {
           parts.push({ type: "text", text: block.text });
         } else if (block.type === "image" && block.source) {
-          // Standard OpenAI vision format
           parts.push({ type: "image_url", image_url: { url: block.source } });
         } else if (block.type === "thinking") {
-          // DeepSeek: pass thinking back as reasoning_content at message level only.
-          // Do NOT add inline {type:"thinking"} to content parts — it's not standard OpenAI format.
           reasoningContent += block.thinking;
         } else if (block.type === "tool_use") {
-          // Flush accumulated text/image+thinking before tool_use
-          if (parts.length > 0 || reasoningContent) {
-            const msg: Record<string, unknown> = {
-              role: m.role,
-              content: parts.length > 0 ? [...parts] : "",
-            };
-            if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
+          // Flush accumulated text/image before tool_use (only if there's content)
+          if (parts.length > 0) {
+            const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+            const carry = reasoningContent || lastReasoning;
+            if (carry) (msg as any).reasoning_content = carry;
             result.push(msg as any);
             parts.length = 0;
-            // Keep reasoningContent — DeepSeek requires it on the tool_calls message too
           }
+          // Build tool_calls message — always attach reasoning if we have any
           const tcMsg: Record<string, unknown> = {
             role: "assistant",
             tool_calls: [
@@ -145,21 +145,22 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
               },
             ],
           };
-          if (reasoningContent) (tcMsg as any).reasoning_content = reasoningContent;
+          const carry = reasoningContent || lastReasoning;
+          if (carry) (tcMsg as any).reasoning_content = carry;
           result.push(tcMsg as any);
+          if (reasoningContent) { lastReasoning = reasoningContent; }
           reasoningContent = "";
         } else if (block.type === "tool_result") {
-          // Flush accumulated text/image+thinking before tool_result
-          if (parts.length > 0 || reasoningContent) {
-            const msg: Record<string, unknown> = {
-              role: m.role,
-              content: parts.length > 0 ? [...parts] : "",
-            };
-            if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
+          // Flush accumulated text/image before tool result (only if there's content)
+          if (parts.length > 0) {
+            const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+            const carry = reasoningContent || lastReasoning;
+            if (carry) (msg as any).reasoning_content = carry;
             result.push(msg as any);
             parts.length = 0;
-            reasoningContent = "";
           }
+          if (reasoningContent) { lastReasoning = reasoningContent; }
+          reasoningContent = "";
           result.push({
             role: "tool",
             tool_call_id: block.tool_use_id!,
@@ -167,14 +168,20 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
           });
         }
       }
-      if (parts.length > 0 || reasoningContent) {
-        const msg: Record<string, unknown> = {
-          role: m.role,
-          content: parts.length > 0 ? parts : "",
-        };
-        if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
+      // Flush remaining text/image at end of blocks
+      if (parts.length > 0) {
+        const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+        const carry = reasoningContent || lastReasoning;
+        if (carry) (msg as any).reasoning_content = carry;
+        result.push(msg as any);
+      } else if (reasoningContent && !lastReasoning) {
+        // Pure thinking with no text/tools in this message — still need to emit
+        // so that reasoning_content enters the conversation history
+        const msg: Record<string, unknown> = { role: m.role, content: "" };
+        (msg as any).reasoning_content = reasoningContent;
         result.push(msg as any);
       }
+      if (reasoningContent) { lastReasoning = reasoningContent; }
     }
   }
   return result;
@@ -443,12 +450,10 @@ export class LLMClient {
       const delta = chunk.choices[0]?.delta;
       if (!delta) continue;
 
-      // Capture thinking blocks (DeepSeek) and stream in real-time
-      if ((delta as any).thinking) {
-        currentThinking += (delta as any).thinking;
-        if ((delta as any).signature) {
-          thinkingSignature = (delta as any).signature;
-        }
+      // Capture reasoning/thinking (DeepSeek sends "reasoning_content", others may use "thinking")
+      const reasoningDelta = (delta as any).reasoning_content || (delta as any).thinking;
+      if (reasoningDelta) {
+        currentThinking += reasoningDelta;
         yield { type: "text", thinkingText: currentThinking, stopReason: "streaming" };
       }
 
