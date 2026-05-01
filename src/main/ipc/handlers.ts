@@ -480,6 +480,11 @@ export function registerIpcHandlers(): void {
       }
     }
 
+    // Update browser screenshot quality if changed
+    if (browserManager && newSettings.browser?.screenshotQuality !== undefined) {
+      browserManager.setScreenshotQuality(newSettings.browser.screenshotQuality);
+    }
+
     logger.info("Settings updated and saved");
   });
 

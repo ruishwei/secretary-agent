@@ -230,7 +230,7 @@ export class LLMClient {
     if (this.config.provider === "anthropic" && this.anthropic) {
       const response = await this.anthropic.messages.create({
         model: this.config.model,
-        max_tokens: 2048,
+        max_tokens: this.config.maxTokens,
         system: systemPrompt,
         messages: [{ role: "user", content: userMessage }],
       });
@@ -239,7 +239,7 @@ export class LLMClient {
     } else if (this.config.provider === "openai" && this.openai) {
       const response = await this.openai.chat.completions.create({
         model: this.config.model,
-        max_tokens: 2048,
+        max_tokens: this.config.maxTokens,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userMessage },
@@ -288,7 +288,7 @@ export class LLMClient {
 
     const stream = this.anthropic!.messages.stream({
       model: this.config.model,
-      max_tokens: 1024,
+      max_tokens: this.config.maxTokens,
       messages: [{
         role: "user",
         content: [
@@ -315,7 +315,7 @@ export class LLMClient {
   ): AsyncGenerator<{ type: "thinking" | "text"; content: string }> {
     const stream = await this.openai!.chat.completions.create({
       model: this.config.model,
-      max_tokens: 1024,
+      max_tokens: this.config.maxTokens,
       messages: [{
         role: "user",
         content: [

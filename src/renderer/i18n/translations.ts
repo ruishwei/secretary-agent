@@ -26,6 +26,7 @@ const translations: Record<string, Record<string, string>> = {
     "settings.browser.homeUrl": "Home Page",
     "settings.browser.autoApproveDomains": "Auto-Approve Domains",
     "settings.browser.autoApproveHint": "One domain per line",
+    "settings.browser.screenshotQuality": "Screenshot Quality",
 
     "privacy.title": "Password Manager",
     "privacy.addEntry": "Add Entry",
@@ -115,6 +116,7 @@ const translations: Record<string, Record<string, string>> = {
     "settings.browser.homeUrl": "主页",
     "settings.browser.autoApproveDomains": "自动批准域名",
     "settings.browser.autoApproveHint": "每行一个域名",
+    "settings.browser.screenshotQuality": "截图质量",
 
     "privacy.title": "密码管理",
     "privacy.addEntry": "添加条目",

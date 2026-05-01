@@ -338,10 +338,10 @@ export class TabSession {
     return JSON.stringify(result?.result?.value ?? null);
   }
 
-  async screenshot(): Promise<string> {
+  async screenshot(quality = 70): Promise<string> {
     const { data } = await this.cdp.send<{ data: string }>("Page.captureScreenshot", {
       format: "jpeg",
-      quality: 70,
+      quality,
     });
     return `data:image/jpeg;base64,${data}`;
   }
@@ -412,6 +412,11 @@ export class BrowserManager {
   private visible = true;
   private statePushCallback?: (state: BrowserState) => void;
   private popupCallback?: (tabId: string, url: string, sourceTabId: string) => void;
+  private _screenshotQuality = 80;
+
+  setScreenshotQuality(quality: number): void {
+    this._screenshotQuality = Math.max(10, Math.min(100, quality));
+  }
 
   setMainWindow(win: BrowserWindow) {
     this.mainWindow = win;
@@ -633,8 +638,8 @@ export class BrowserManager {
     return this.resolveSession(tabId).evaluateJs(expression);
   }
 
-  async screenshot(tabId?: string): Promise<string> {
-    return this.resolveSession(tabId).screenshot();
+  async screenshot(tabId?: string, quality?: number): Promise<string> {
+    return this.resolveSession(tabId).screenshot(quality ?? this._screenshotQuality);
   }
 
   async refresh(tabId?: string): Promise<void> {

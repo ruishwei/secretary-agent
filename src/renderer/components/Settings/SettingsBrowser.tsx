@@ -35,6 +35,24 @@ export function SettingsBrowser({ settings, onChange }: Props) {
         />
       </div>
       <div>
+        <label className="text-xs text-gray-500">
+          {t("settings.browser.screenshotQuality")}: {local.screenshotQuality}%
+        </label>
+        <input
+          type="range"
+          min={10}
+          max={100}
+          step={5}
+          value={local.screenshotQuality}
+          onChange={(e) => setLocal({ ...local, screenshotQuality: Number(e.target.value) })}
+          className="w-full mt-0.5"
+        />
+        <div className="flex justify-between text-xs text-gray-600">
+          <span>10% (smaller)</span>
+          <span>100% (best)</span>
+        </div>
+      </div>
+      <div>
         <label className="text-xs text-gray-500">{t("settings.browser.autoApproveDomains")}</label>
         <textarea
           value={domainsStr}

@@ -159,7 +159,7 @@ export class AgentLoop {
 
       // Main agent loop
       while (this.turnCount < MAX_AGENT_TOOL_TURNS) {
-        if (this.abortController.signal.aborted) {
+        if (this.abortController?.signal.aborted) {
           yield { type: "done", summary: "Agent aborted by user." };
           return;
         }
@@ -225,7 +225,7 @@ export class AgentLoop {
             systemPrompt,
             this.context.getMessages(),
             tools,
-            { signal: this.abortController.signal }
+            { signal: this.abortController?.signal }
           )) {
             if (response.thinkingText) {
               yield { type: "thinking", plan: response.thinkingText, reasoning: response.thinkingText };
@@ -274,98 +274,111 @@ export class AgentLoop {
           };
         }
 
-        // Execute tools
+        // Execute tools — wrapped to prevent orphaned tool_calls in context
         const toolResults: Array<{ toolCallId: string; name: string; result: string; isError?: boolean }> = [];
 
-        for (const tc of finalToolCalls) {
-          const startTime = toolStartTimes.get(tc.id) || Date.now();
+        try {
+          for (const tc of finalToolCalls) {
+            const startTime = toolStartTimes.get(tc.id) || Date.now();
 
-          // Interleaved progress: pump progress events while tool runs
-          const progressQueue: Array<{ progressType: "thinking" | "text"; content: string }> = [];
-          let progressWakeup: (() => void) | null = null;
+            // Interleaved progress: pump progress events while tool runs
+            const progressQueue: Array<{ progressType: "thinking" | "text"; content: string }> = [];
+            let progressWakeup: (() => void) | null = null;
 
-          const nextProgress = (): Promise<void> =>
-            new Promise<void>((resolve) => {
-              if (progressQueue.length > 0) { resolve(); return; }
-              progressWakeup = resolve;
+            const nextProgress = (): Promise<void> =>
+              new Promise<void>((resolve) => {
+                if (progressQueue.length > 0) { resolve(); return; }
+                progressWakeup = resolve;
+              });
+
+            const toolPromise = this.toolExecutor.execute(tc.name, tc.input, (progress) => {
+              progressQueue.push({ progressType: progress.type, content: progress.content });
+              if (progressWakeup) { progressWakeup(); progressWakeup = null; }
             });
 
-          const toolPromise = this.toolExecutor.execute(tc.name, tc.input, (progress) => {
-            progressQueue.push({ progressType: progress.type, content: progress.content });
-            if (progressWakeup) { progressWakeup(); progressWakeup = null; }
-          });
+            let toolResult: { result: string; success: boolean; error?: string; snapshot?: string };
 
-          let toolResult: { result: string; success: boolean; error?: string; snapshot?: string };
+            try {
+              while (true) {
+                let resolved = false;
+                let resolvedValue: typeof toolResult | undefined;
 
-          try {
-            while (true) {
-              let resolved = false;
-              let resolvedValue: typeof toolResult | undefined;
+                await Promise.race([
+                  toolPromise.then((r) => { resolved = true; resolvedValue = r; }),
+                  nextProgress(),
+                ]);
 
-              await Promise.race([
-                toolPromise.then((r) => { resolved = true; resolvedValue = r; }),
-                nextProgress(),
-              ]);
+                while (progressQueue.length > 0) {
+                  const p = progressQueue.shift()!;
+                  yield {
+                    type: "tool-progress" as const,
+                    toolCallId: tc.id,
+                    tool: tc.name,
+                    progressType: p.progressType,
+                    content: p.content,
+                  };
+                }
 
-              while (progressQueue.length > 0) {
-                const p = progressQueue.shift()!;
-                yield {
-                  type: "tool-progress" as const,
-                  toolCallId: tc.id,
-                  tool: tc.name,
-                  progressType: p.progressType,
-                  content: p.content,
-                };
+                if (resolved) { toolResult = resolvedValue!; break; }
               }
-
-              if (resolved) { toolResult = resolvedValue!; break; }
+            } catch (err: any) {
+              toolResult = {
+                success: false,
+                result: "",
+                error: `Tool execution error: ${err.message}`,
+              };
             }
-          } catch (err: any) {
-            toolResult = {
-              success: false,
-              result: "",
-              error: `Tool execution error: ${err.message}`,
+            const durationMs = Date.now() - startTime;
+
+            // Yield tool result with timing
+            yield {
+              type: "tool-result",
+              toolCallId: tc.id,
+              tool: tc.name,
+              result: toolResult.error || toolResult.result,
+              success: toolResult.success,
+              error: toolResult.error,
+              durationMs,
             };
-          }
-          const durationMs = Date.now() - startTime;
 
-          // Yield tool result with timing
-          yield {
-            type: "tool-result",
-            toolCallId: tc.id,
-            tool: tc.name,
-            result: toolResult.error || toolResult.result,
-            success: toolResult.success,
-            error: toolResult.error,
-            durationMs,
-          };
+            toolResults.push({
+              toolCallId: tc.id,
+              name: tc.name,
+              result: toolResult.error || toolResult.result,
+              isError: !toolResult.success,
+            });
 
-          toolResults.push({
-            toolCallId: tc.id,
-            name: tc.name,
-            result: toolResult.error || toolResult.result,
-            isError: !toolResult.success,
-          });
-
-          // If a tool returned a fresh snapshot, update the prompt for the next LLM call
-          if (toolResult.snapshot) {
-            // Replace or add snapshot section
-            const idx = sections.findIndex((s) => s.id === "browser:snapshot");
-            const snapSection = {
-              id: "browser:snapshot",
-              priority: 21,
-              content: `### Page Snapshot (Accessibility Tree)\n\`\`\`\n${toolResult.snapshot}\n\`\`\`\n\nUse the @ref IDs above to interact with page elements.`,
-            };
-            if (idx >= 0) {
-              sections[idx] = snapSection;
-            } else {
-              sections.push(snapSection);
+            // If a tool returned a fresh snapshot, update the prompt for the next LLM call
+            if (toolResult.snapshot) {
+              const idx = sections.findIndex((s) => s.id === "browser:snapshot");
+              const snapSection = {
+                id: "browser:snapshot",
+                priority: 21,
+                content: `### Page Snapshot (Accessibility Tree)\n\`\`\`\n${toolResult.snapshot}\n\`\`\`\n\nUse the @ref IDs above to interact with page elements.`,
+              };
+              if (idx >= 0) {
+                sections[idx] = snapSection;
+              } else {
+                sections.push(snapSection);
+              }
             }
           }
+        } finally {
+          // Ensure every tool call has a response, preventing orphaned tool_calls
+          // that would cause "tool_call_ids did not have response messages" errors
+          const covered = new Set(toolResults.map((r) => r.toolCallId));
+          for (const tc of finalToolCalls) {
+            if (!covered.has(tc.id)) {
+              toolResults.push({
+                toolCallId: tc.id,
+                name: tc.name,
+                result: "Tool execution interrupted",
+                isError: true,
+              });
+            }
+          }
+          this.context.addToolResults(toolResults);
         }
-
-        // Add tool results to context
-        this.context.addToolResults(toolResults);
 
         // Check if any tool updated the plan
         for (const tc of finalToolCalls) {

@@ -247,6 +247,7 @@ export interface AppSettings {
   browser: {
     homeUrl: string;
     autoApproveDomains: string[];
+    screenshotQuality: number;
   };
   language: "zh-CN" | "en";
   shortcuts: {
@@ -340,6 +341,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   browser: {
     homeUrl: "about:blank",
     autoApproveDomains: [],
+    screenshotQuality: 80,
   },
   language: "zh-CN",
   shortcuts: {
