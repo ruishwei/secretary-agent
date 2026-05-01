@@ -423,8 +423,12 @@ export class LLMClient {
         }
       } else if (event.type === "content_block_start") {
         if (event.content_block.type === "tool_use") {
+          const blockId = (event.content_block as any).id;
+          if (!blockId) {
+            logger.warn(`content_block_start for tool_use "${event.content_block.name}" at index ${event.index} has no id — SDK may not expose it`);
+          }
           currentToolCalls.set(event.index.toString(), {
-            id: (event.content_block as any).id || "",
+            id: blockId || "",
             name: event.content_block.name,
             input: "",
           });
@@ -435,20 +439,19 @@ export class LLMClient {
     const finalMessage = await stream.finalMessage();
     const toolCalls: LLMToolCall[] = [];
 
-    for (const block of finalMessage.content) {
+    finalMessage.content.forEach((block, index) => {
       if (block.type === "tool_use") {
-        // Use block.id if available; otherwise fall back to ID captured during streaming
-        let toolId = block.id;
-        if (!toolId) {
-          for (const [, streamingTc] of currentToolCalls) {
-            if (streamingTc.name === block.name && streamingTc.id) {
-              toolId = streamingTc.id;
-              break;
-            }
-          }
+        // Prefer block.id from finalMessage, then streaming TC (matched by content-block index),
+        // then a deterministic timestamp-based fallback.
+        const streamingTc = currentToolCalls.get(index.toString());
+        const toolId = block.id || streamingTc?.id || `tool-${Date.now()}-${index}-${block.name}`;
+
+        if (!block.id) {
+          logger.warn(`Tool use "${block.name}" at content index ${index} missing id in finalMessage, resolved to: ${toolId}`);
         }
+
         toolCalls.push({
-          id: toolId || `tool-${Date.now()}-${block.name}`,
+          id: toolId,
           name: block.name,
           input: (block.input as Record<string, unknown>) || {},
         });
@@ -458,7 +461,7 @@ export class LLMClient {
         currentThinking = (block as any).thinking || "";
         thinkingSignature = (block as any).signature || "";
       }
-    }
+    });
 
     const thinkingBlocks = currentThinking
       ? [{ thinking: currentThinking, ...(thinkingSignature ? { signature: thinkingSignature } : {}) }]
@@ -540,10 +543,10 @@ export class LLMClient {
     }
 
     const allToolCalls: LLMToolCall[] = [];
-    for (const [, tc] of toolCalls) {
+    for (const [idx, tc] of toolCalls) {
       if (tc.name) {
         allToolCalls.push({
-          id: tc.id || `tool-${Date.now()}`,
+          id: tc.id || `tool-${Date.now()}-${idx}-${tc.name}`,
           name: tc.name,
           input: tc.input ? JSON.parse(tc.input) : {},
         });
