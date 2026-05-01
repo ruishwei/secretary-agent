@@ -46,6 +46,24 @@ function ensureMemoryStore(): MemoryStore {
   return _memoryStore;
 }
 
+function getActiveLlmConfig(): {
+  provider: "anthropic" | "openai";
+  apiKey: string;
+  model: string;
+  maxTokens: number;
+  baseUrl?: string;
+} | null {
+  const active = settings.llmConfigs?.find((c) => c.id === settings.activeLlmConfigId);
+  if (!active) return null;
+  return {
+    provider: active.provider,
+    apiKey: active.apiKey,
+    model: active.model,
+    maxTokens: active.maxTokens,
+    baseUrl: active.baseUrl,
+  };
+}
+
 function getMainWin(): BrowserWindow | null {
   const windows = BrowserWindow.getAllWindows();
   return windows.length > 0 ? windows[0] : null;
@@ -121,16 +139,12 @@ async function initAgentLoop(): Promise<AgentLoop> {
   toolExecutor.setRendererCallback(getRendererSender());
 
   // Create AgentLoop (creates LLMClient internally)
+  const activeConfig = getActiveLlmConfig();
+  if (!activeConfig) {
+    throw new Error("No active LLM configuration. Please configure a model in Settings.");
+  }
   agentLoop = new AgentLoop(
-    {
-      llm: {
-        provider: settings.llm.provider,
-        apiKey: settings.llm.apiKey,
-        model: settings.llm.model,
-        maxTokens: settings.llm.maxTokens,
-        baseUrl: settings.llm.baseUrl,
-      },
-    },
+    { llm: activeConfig },
     browserStateProvider,
     toolExecutor,
   );
@@ -226,7 +240,8 @@ export function registerIpcHandlers(): void {
 
       const loop = await initAgentLoop();
 
-      if (!settings.llm.apiKey) {
+      const activeCfg = getActiveLlmConfig();
+      if (!activeCfg || !activeCfg.apiKey) {
         sendAgentEvent(win, {
           type: "error",
           message: "No API key configured. Please set your LLM API key in Settings.",
@@ -457,15 +472,12 @@ export function registerIpcHandlers(): void {
     // Persist to disk
     saveSettings(settings);
 
-    // Update agent loop with new LLM config
-    if (agentLoop && newSettings.llm) {
-      agentLoop.updateLLMConfig({
-        provider: settings.llm.provider,
-        apiKey: settings.llm.apiKey,
-        model: settings.llm.model,
-        maxTokens: settings.llm.maxTokens,
-        baseUrl: settings.llm.baseUrl,
-      });
+    // Update agent loop with new LLM config if configs or active changed
+    if (agentLoop && (newSettings.llmConfigs || newSettings.activeLlmConfigId)) {
+      const activeCfg = getActiveLlmConfig();
+      if (activeCfg) {
+        agentLoop.updateLLMConfig(activeCfg);
+      }
     }
 
     logger.info("Settings updated and saved");

@@ -71,6 +71,16 @@ const translations: Record<string, Record<string, string>> = {
     "settings.shortcuts.voiceInput": "Voice Input",
     "settings.shortcuts.recordHint": "Click the input and press your desired key combination, then press Enter to confirm.",
 
+    "settings.llm.configName": "Config Name",
+    "settings.llm.supportsVision": "Supports Vision",
+    "settings.llm.addConfig": "Add Config",
+    "settings.llm.deleteConfig": "Delete",
+    "settings.llm.setActive": "Set as Active",
+    "settings.llm.active": "Active",
+    "settings.llm.noConfigs": "No configurations. Add one to begin.",
+    "settings.llm.selectHint": "Select a configuration or create a new one",
+    "settings.llm.cannotDeleteLast": "Cannot delete the last configuration",
+
     "common.save": "Save",
     "common.cancel": "Cancel",
     "common.delete": "Delete",
@@ -149,6 +159,16 @@ const translations: Record<string, Record<string, string>> = {
     "settings.shortcuts.title": "快捷键设置",
     "settings.shortcuts.voiceInput": "语音输入",
     "settings.shortcuts.recordHint": "点击输入框后按下你想要的组合键，然后按回车确认。",
+
+    "settings.llm.configName": "配置名称",
+    "settings.llm.supportsVision": "支持视觉",
+    "settings.llm.addConfig": "添加配置",
+    "settings.llm.deleteConfig": "删除",
+    "settings.llm.setActive": "设为活跃",
+    "settings.llm.active": "活跃",
+    "settings.llm.noConfigs": "暂无配置，点击添加配置开始。",
+    "settings.llm.selectHint": "选择一个配置或创建新的配置",
+    "settings.llm.cannotDeleteLast": "无法删除最后一个配置",
 
     "common.save": "保存",
     "common.cancel": "取消",

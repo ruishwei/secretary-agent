@@ -216,14 +216,20 @@ export interface VoiceResult {
 
 // ===== Settings =====
 
+export interface LlmConfigEntry {
+  id: string;
+  name: string;
+  provider: "anthropic" | "openai";
+  apiKey: string;
+  model: string;
+  maxTokens: number;
+  baseUrl?: string;
+  supportsVision?: boolean;
+}
+
 export interface AppSettings {
-  llm: {
-    provider: "anthropic" | "openai";
-    apiKey: string;
-    model: string;
-    maxTokens: number;
-    baseUrl?: string;
-  };
+  llmConfigs: LlmConfigEntry[];
+  activeLlmConfigId: string;
   voice: {
     provider: "whisper" | "webspeech" | "auto";
     language: string;
@@ -305,12 +311,18 @@ export interface MemoryContent {
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
-  llm: {
-    provider: "anthropic",
-    apiKey: "",
-    model: "claude-sonnet-4-6",
-    maxTokens: 4096,
-  },
+  llmConfigs: [
+    {
+      id: "cfg-default",
+      name: "Default",
+      provider: "anthropic" as const,
+      apiKey: "",
+      model: "claude-sonnet-4-6",
+      maxTokens: 4096,
+      supportsVision: true,
+    },
+  ],
+  activeLlmConfigId: "cfg-default",
   voice: {
     provider: "auto",
     language: "zh-CN",

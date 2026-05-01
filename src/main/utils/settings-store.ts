@@ -19,11 +19,29 @@ export function loadSettings(): AppSettings {
     if (fs.existsSync(filePath)) {
       const raw = fs.readFileSync(filePath, "utf-8");
       const saved = JSON.parse(raw);
+
+      // Migration: old single llm object → new multi-config llmConfigs array
+      if (saved.llm && !saved.llmConfigs) {
+        saved.llmConfigs = [{
+          id: "cfg-legacy",
+          name: saved.llm.provider === "anthropic" ? "Claude" : "OpenAI",
+          provider: saved.llm.provider || "anthropic",
+          apiKey: saved.llm.apiKey || "",
+          model: saved.llm.model || "claude-sonnet-4-6",
+          maxTokens: saved.llm.maxTokens || 4096,
+          baseUrl: saved.llm.baseUrl,
+          supportsVision: true,
+        }];
+        saved.activeLlmConfigId = "cfg-legacy";
+        delete saved.llm;
+      }
+
       // Merge with defaults to handle missing new fields
       const merged: AppSettings = {
         ...DEFAULT_SETTINGS,
         ...saved,
-        llm: { ...DEFAULT_SETTINGS.llm, ...(saved.llm || {}) },
+        llmConfigs: saved.llmConfigs || DEFAULT_SETTINGS.llmConfigs,
+        activeLlmConfigId: saved.activeLlmConfigId || DEFAULT_SETTINGS.activeLlmConfigId,
         voice: { ...DEFAULT_SETTINGS.voice, ...(saved.voice || {}) },
         browser: { ...DEFAULT_SETTINGS.browser, ...(saved.browser || {}) },
         privacy: { ...DEFAULT_SETTINGS.privacy, ...(saved.privacy || {}) },

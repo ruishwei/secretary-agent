@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "../../store";
+import { ModelSelector } from "./ModelSelector";
 
 export interface Attachment {
   name: string;
@@ -211,8 +212,9 @@ export function InputBar({ value, onChange, onSend, onAbort, isStreaming, onSett
           </button>
         </div>
 
-        {/* Right group: Voice + Send */}
+        {/* Right group: Model + Voice + Send */}
         <div className="flex items-center gap-1">
+          <ModelSelector />
           <button
             className={btnBase}
             title={`Voice Input (${voiceShortcut})`}
