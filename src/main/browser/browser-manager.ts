@@ -340,8 +340,8 @@ export class TabSession {
   }
 
   async screenshot(): Promise<string> {
-    const result = await this.cdp.send<string>("Page.captureScreenshot", { format: "png" });
-    return `data:image/png;base64,${result}`;
+    const { data } = await this.cdp.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
+    return `data:image/png;base64,${data}`;
   }
 
   async refresh(): Promise<void> {
