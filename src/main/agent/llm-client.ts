@@ -118,6 +118,12 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
     } else {
       const parts: OpenAI.Chat.ChatCompletionContentPart[] = [];
       let reasoningContent = "";
+      const toolCallsAccum: Array<{
+        id: string;
+        type: "function";
+        function: { name: string; arguments: string };
+      }> = [];
+
       for (const block of m.content) {
         if (block.type === "text" && block.text) {
           parts.push({ type: "text", text: block.text });
@@ -126,7 +132,7 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
         } else if (block.type === "thinking") {
           reasoningContent += block.thinking;
         } else if (block.type === "tool_use") {
-          // Flush accumulated text/image before tool_use (only if there's content)
+          // Flush accumulated text/image before tool_use
           if (parts.length > 0) {
             const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
             const carry = reasoningContent || lastReasoning;
@@ -134,24 +140,15 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
             result.push(msg as any);
             parts.length = 0;
           }
-          // Build tool_calls message — always attach reasoning if we have any
-          const tcMsg: Record<string, unknown> = {
-            role: "assistant",
-            tool_calls: [
-              {
-                id: block.id!,
-                type: "function" as const,
-                function: { name: block.name!, arguments: JSON.stringify(block.input) },
-              },
-            ],
-          };
-          const carry = reasoningContent || lastReasoning;
-          if (carry) (tcMsg as any).reasoning_content = carry;
-          result.push(tcMsg as any);
+          toolCallsAccum.push({
+            id: block.id!,
+            type: "function" as const,
+            function: { name: block.name!, arguments: JSON.stringify(block.input) },
+          });
           if (reasoningContent) { lastReasoning = reasoningContent; }
           reasoningContent = "";
         } else if (block.type === "tool_result") {
-          // Flush accumulated text/image before tool result (only if there's content)
+          // Flush accumulated text/image before tool result
           if (parts.length > 0) {
             const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
             const carry = reasoningContent || lastReasoning;
@@ -168,15 +165,25 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
           });
         }
       }
+
+      // Emit accumulated tool calls as a single assistant message
+      if (toolCallsAccum.length > 0) {
+        const tcMsg: Record<string, unknown> = {
+          role: "assistant",
+          tool_calls: toolCallsAccum,
+        };
+        if (lastReasoning) (tcMsg as any).reasoning_content = lastReasoning;
+        result.push(tcMsg as any);
+      }
+
       // Flush remaining text/image at end of blocks
       if (parts.length > 0) {
         const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
         const carry = reasoningContent || lastReasoning;
         if (carry) (msg as any).reasoning_content = carry;
         result.push(msg as any);
-      } else if (reasoningContent && !lastReasoning) {
-        // Pure thinking with no text/tools in this message — still need to emit
-        // so that reasoning_content enters the conversation history
+      } else if (reasoningContent && !lastReasoning && toolCallsAccum.length === 0) {
+        // Pure thinking with no text/tools — still emit so reasoning enters history
         const msg: Record<string, unknown> = { role: m.role, content: "" };
         (msg as any).reasoning_content = reasoningContent;
         result.push(msg as any);
@@ -244,24 +251,42 @@ export class LLMClient {
   }
 
   /**
-   * Single-turn vision query: send an image + question, get a text answer.
+   * Single-turn vision query: send an image + question, get a text answer (non-streaming).
+   * Prefer streamingVisionQuery for real-time output and thinking capture.
    */
   async visionQuery(screenshotDataUrl: string, question: string): Promise<string> {
-    if (this.config.provider === "anthropic" && this.anthropic) {
-      return this.visionAnthropic(screenshotDataUrl, question);
-    } else if (this.config.provider === "openai" && this.openai) {
-      return this.visionOpenAI(screenshotDataUrl, question);
+    let result = "";
+    for await (const delta of this.streamingVisionQuery(screenshotDataUrl, question)) {
+      if (delta.type === "text") result += delta.content;
     }
-    throw new Error("No LLM client configured for vision");
+    return result || "No vision response";
   }
 
-  private async visionAnthropic(screenshotDataUrl: string, question: string): Promise<string> {
-    // Extract base64 data from data URL
+  /**
+   * Streaming vision query: yields thinking and text deltas in real-time.
+   */
+  async *streamingVisionQuery(
+    screenshotDataUrl: string,
+    question: string
+  ): AsyncGenerator<{ type: "thinking" | "text"; content: string }> {
+    if (this.config.provider === "anthropic" && this.anthropic) {
+      yield* this.visionAnthropicStream(screenshotDataUrl, question);
+    } else if (this.config.provider === "openai" && this.openai) {
+      yield* this.visionOpenAIStream(screenshotDataUrl, question);
+    } else {
+      throw new Error("No LLM client configured for vision");
+    }
+  }
+
+  private async *visionAnthropicStream(
+    screenshotDataUrl: string,
+    question: string
+  ): AsyncGenerator<{ type: "thinking" | "text"; content: string }> {
     const match = screenshotDataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
     const mediaType = match ? `image/${match[1]}` : "image/png";
     const data = match ? match[2] : screenshotDataUrl;
 
-    const response = await this.anthropic!.messages.create({
+    const stream = this.anthropic!.messages.stream({
       model: this.config.model,
       max_tokens: 1024,
       messages: [{
@@ -272,12 +297,23 @@ export class LLMClient {
         ],
       }],
     });
-    const textBlock = response.content.find((b) => b.type === "text");
-    return (textBlock as any)?.text || "No vision response";
+
+    for await (const event of stream) {
+      if (event.type === "content_block_delta") {
+        if (event.delta.type === "text_delta") {
+          yield { type: "text", content: event.delta.text };
+        } else if (event.delta.type === "thinking_delta") {
+          yield { type: "thinking", content: event.delta.thinking };
+        }
+      }
+    }
   }
 
-  private async visionOpenAI(screenshotDataUrl: string, question: string): Promise<string> {
-    const response = await this.openai!.chat.completions.create({
+  private async *visionOpenAIStream(
+    screenshotDataUrl: string,
+    question: string
+  ): AsyncGenerator<{ type: "thinking" | "text"; content: string }> {
+    const stream = await this.openai!.chat.completions.create({
       model: this.config.model,
       max_tokens: 1024,
       messages: [{
@@ -287,8 +323,23 @@ export class LLMClient {
           { type: "text", text: question },
         ],
       }],
+      stream: true,
     });
-    return response.choices[0]?.message?.content || "No vision response";
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices[0]?.delta;
+      if (!delta) continue;
+
+      // DeepSeek reasoning_content
+      const reasoning = (delta as any).reasoning_content;
+      if (reasoning) {
+        yield { type: "thinking", content: reasoning };
+      }
+
+      if (delta.content) {
+        yield { type: "text", content: delta.content };
+      }
+    }
   }
 
   updateConfig(config: Partial<LLMConfig>) {

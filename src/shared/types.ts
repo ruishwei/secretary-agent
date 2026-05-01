@@ -97,6 +97,7 @@ export interface ToolCallRecord {
 export type AgentEvent =
   | AgentThinkingEvent
   | AgentToolStartEvent
+  | AgentToolProgressEvent
   | AgentToolResultEvent
   | AgentResponseEvent
   | AgentReviewRequiredEvent
@@ -110,6 +111,14 @@ export interface AgentThinkingEvent {
   reasoning?: string;  // LLM's real-time reasoning content (streaming)
   currentStep?: number;
   totalSteps?: number;
+}
+
+export interface AgentToolProgressEvent {
+  type: "tool-progress";
+  toolCallId: string;
+  tool: string;
+  progressType: "thinking" | "text";
+  content: string;
 }
 
 export interface AgentToolStartEvent {

@@ -18,6 +18,7 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
   const setStreaming = useStore((s) => s.setStreaming);
   const addAgentAction = useStore((s) => s.addAgentAction);
   const updateAgentActionResult = useStore((s) => s.updateAgentActionResult);
+  const setAgentThinking = useStore((s) => s.setAgentThinking);
   const setReviewRequest = useStore((s) => s.setReviewRequest);
   const setPlanItems = useStore((s) => s.setPlanItems);
   const clearAgentState = useStore((s) => s.clearAgentState);
@@ -64,6 +65,13 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
           });
           break;
 
+        case "tool-progress":
+          // Stream thinking/text progress from long-running tools (e.g. vision)
+          if (event.progressType === "thinking") {
+            setAgentThinking(event.content);
+          }
+          break;
+
         case "tool-result":
           updateAgentActionResult(event.toolCallId, event.result, event.success);
           updateToolCallBlock(event.toolCallId, event.result, event.success, event.durationMs);
@@ -105,6 +113,7 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
   }, [
     addAgentAction,
     updateAgentActionResult,
+    setAgentThinking,
     appendBlockToLastAssistant,
     updateToolCallBlock,
     updateLastAssistantMessage,

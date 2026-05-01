@@ -13,7 +13,10 @@ export interface ToolResult {
 
 export interface ToolHandler {
   definition: ToolDefinition;
-  execute(args: Record<string, unknown>): Promise<ToolResult>;
+  execute(
+    args: Record<string, unknown>,
+    onProgress?: (chunk: { type: "thinking" | "text"; content: string }) => void
+  ): Promise<ToolResult>;
 }
 
 export type ToolName = string;
@@ -48,9 +51,13 @@ export class ToolExecutor {
   }
 
   /**
-   * Execute a tool call by name.
+   * Execute a tool call by name. Passes onProgress callback for streaming tools.
    */
-  async execute(name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  async execute(
+    name: string,
+    args: Record<string, unknown>,
+    onProgress?: (chunk: { type: "thinking" | "text"; content: string }) => void
+  ): Promise<ToolResult> {
     if (this.abortSignal?.aborted) {
       return { success: false, result: "", error: "Agent aborted" };
     }
@@ -67,7 +74,7 @@ export class ToolExecutor {
     logger.info(`Executing tool: ${name}(${JSON.stringify(args).substring(0, 100)})`);
 
     try {
-      const result = await handler.execute(args);
+      const result = await handler.execute(args, onProgress);
       logger.info(`Tool result (${result.success ? "success" : "error"}): ${result.result.substring(0, 200)}`);
       return result;
     } catch (err) {

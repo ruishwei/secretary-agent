@@ -279,9 +279,47 @@ export class AgentLoop {
 
         for (const tc of finalToolCalls) {
           const startTime = toolStartTimes.get(tc.id) || Date.now();
+
+          // Interleaved progress: pump progress events while tool runs
+          const progressQueue: Array<{ progressType: "thinking" | "text"; content: string }> = [];
+          let progressWakeup: (() => void) | null = null;
+
+          const nextProgress = (): Promise<void> =>
+            new Promise<void>((resolve) => {
+              if (progressQueue.length > 0) { resolve(); return; }
+              progressWakeup = resolve;
+            });
+
+          const toolPromise = this.toolExecutor.execute(tc.name, tc.input, (progress) => {
+            progressQueue.push({ progressType: progress.type, content: progress.content });
+            if (progressWakeup) { progressWakeup(); progressWakeup = null; }
+          });
+
           let toolResult: { result: string; success: boolean; error?: string; snapshot?: string };
+
           try {
-            toolResult = await this.toolExecutor.execute(tc.name, tc.input);
+            while (true) {
+              let resolved = false;
+              let resolvedValue: typeof toolResult | undefined;
+
+              await Promise.race([
+                toolPromise.then((r) => { resolved = true; resolvedValue = r; }),
+                nextProgress(),
+              ]);
+
+              while (progressQueue.length > 0) {
+                const p = progressQueue.shift()!;
+                yield {
+                  type: "tool-progress" as const,
+                  toolCallId: tc.id,
+                  tool: tc.name,
+                  progressType: p.progressType,
+                  content: p.content,
+                };
+              }
+
+              if (resolved) { toolResult = resolvedValue!; break; }
+            }
           } catch (err: any) {
             toolResult = {
               success: false,
