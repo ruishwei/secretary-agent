@@ -279,7 +279,16 @@ export class AgentLoop {
 
         for (const tc of finalToolCalls) {
           const startTime = toolStartTimes.get(tc.id) || Date.now();
-          const result = await this.toolExecutor.execute(tc.name, tc.input);
+          let toolResult: { result: string; success: boolean; error?: string; snapshot?: string };
+          try {
+            toolResult = await this.toolExecutor.execute(tc.name, tc.input);
+          } catch (err: any) {
+            toolResult = {
+              success: false,
+              result: "",
+              error: `Tool execution error: ${err.message}`,
+            };
+          }
           const durationMs = Date.now() - startTime;
 
           // Yield tool result with timing
@@ -287,27 +296,27 @@ export class AgentLoop {
             type: "tool-result",
             toolCallId: tc.id,
             tool: tc.name,
-            result: result.error || result.result,
-            success: result.success,
-            error: result.error,
+            result: toolResult.error || toolResult.result,
+            success: toolResult.success,
+            error: toolResult.error,
             durationMs,
           };
 
           toolResults.push({
             toolCallId: tc.id,
             name: tc.name,
-            result: result.error || result.result,
-            isError: !result.success,
+            result: toolResult.error || toolResult.result,
+            isError: !toolResult.success,
           });
 
           // If a tool returned a fresh snapshot, update the prompt for the next LLM call
-          if (result.snapshot) {
+          if (toolResult.snapshot) {
             // Replace or add snapshot section
             const idx = sections.findIndex((s) => s.id === "browser:snapshot");
             const snapSection = {
               id: "browser:snapshot",
               priority: 21,
-              content: `### Page Snapshot (Accessibility Tree)\n\`\`\`\n${result.snapshot}\n\`\`\`\n\nUse the @ref IDs above to interact with page elements.`,
+              content: `### Page Snapshot (Accessibility Tree)\n\`\`\`\n${toolResult.snapshot}\n\`\`\`\n\nUse the @ref IDs above to interact with page elements.`,
             };
             if (idx >= 0) {
               sections[idx] = snapSection;

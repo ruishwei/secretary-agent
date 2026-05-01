@@ -349,7 +349,7 @@ export class LLMClient {
     let currentText = "";
     let currentThinking = "";
     let thinkingSignature = "";
-    const currentToolCalls: Map<string, { name: string; input: string }> = new Map();
+    const currentToolCalls: Map<string, { id: string; name: string; input: string }> = new Map();
 
     for await (const event of stream) {
       if (event.type === "content_block_delta") {
@@ -363,6 +363,7 @@ export class LLMClient {
           thinkingSignature += event.delta.signature;
         } else if (event.delta.type === "input_json_delta") {
           const existing = currentToolCalls.get(event.index.toString()) || {
+            id: "",
             name: "",
             input: "",
           };
@@ -372,6 +373,7 @@ export class LLMClient {
       } else if (event.type === "content_block_start") {
         if (event.content_block.type === "tool_use") {
           currentToolCalls.set(event.index.toString(), {
+            id: (event.content_block as any).id || "",
             name: event.content_block.name,
             input: "",
           });
@@ -384,8 +386,18 @@ export class LLMClient {
 
     for (const block of finalMessage.content) {
       if (block.type === "tool_use") {
+        // Use block.id if available; otherwise fall back to ID captured during streaming
+        let toolId = block.id;
+        if (!toolId) {
+          for (const [, streamingTc] of currentToolCalls) {
+            if (streamingTc.name === block.name && streamingTc.id) {
+              toolId = streamingTc.id;
+              break;
+            }
+          }
+        }
         toolCalls.push({
-          id: block.id,
+          id: toolId || `tool-${Date.now()}-${block.name}`,
           name: block.name,
           input: (block.input as Record<string, unknown>) || {},
         });

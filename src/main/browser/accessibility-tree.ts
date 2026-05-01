@@ -126,7 +126,10 @@ export class AccessibilityTree {
 
     const isInteractive = INTERACTIVE_ROLES.has(role);
     const hasName = name.length > 0;
-    const shouldAssignRef = isInteractive || (hasName && (role === "heading" || role === "image"));
+    const childCount = (raw.childIds || raw.children || []).length;
+    // Assign a ref to interactive elements, named headings/images, and any container
+    // that has children (otherwise intermediate nodes block tree traversal).
+    const shouldAssignRef = isInteractive || (hasName && (role === "heading" || role === "image")) || childCount > 0;
 
     const ref = assignedRef || (shouldAssignRef ? nextRef() : "");
 
@@ -138,7 +141,7 @@ export class AccessibilityTree {
     const rawChildren = raw.childIds || raw.children || [];
     for (const childId of rawChildren) {
       const rawChild = rawNodes.get(typeof childId === "string" ? childId : String(childId));
-      if (rawChild && !rawChild.ignored) {
+      if (rawChild) {
         const childRef = this.buildNode(
           rawChild, rawNodes, nodes, backendToRef, ref, depth + 1
         );
