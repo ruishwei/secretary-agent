@@ -35,6 +35,21 @@ const INTERACTIVE_ROLES = new Set([
   "columnheader", "row", "menu", "navigation",
 ]);
 
+// Roles that always produce meaningful output (skip others if nameless)
+const MEANINGFUL_ROLES = new Set([
+  "heading", "link", "button", "textbox", "searchbox", "checkbox", "radio",
+  "switch", "combobox", "listbox", "image", "paragraph", "statictext",
+  "inlineTextBox", "navigation", "list", "listitem", "table", "alert",
+  "note", "menu", "menubar", "tab",
+]);
+
+// Roles that are pure containers — never render themselves, just pass through to children
+const PASS_THROUGH_ROLES = new Set([
+  "generic", "group", "none", "section", "div", "span", "article", "main",
+  "header", "footer", "aside", "region", "form", "figure", "details",
+  "summary", "blockquote", "caption",
+]);
+
 // Roles that contain text content to display
 const TEXT_ROLES = new Set([
   "paragraph", "heading", "statictext", "label", "note", "article",
@@ -182,40 +197,58 @@ export class AccessibilityTree {
     const name = node.name;
     const value = node.value;
     const checked = node.checked;
+    const hasChildren = node.children.length > 0;
+    const isInteractive = INTERACTIVE_ROLES.has(role);
+
+    // Pass-through containers: skip rendering this node but still recurse into children
+    if (PASS_THROUGH_ROLES.has(role) && !name && !isInteractive) {
+      for (const childRef of node.children) {
+        this.renderTree(childRef, nodes, lines, indent, false);
+      }
+      return;
+    }
+
+    // Non-meaningful, non-interactive node with no name/value → skip but recurse
+    if (!MEANINGFUL_ROLES.has(role) && !isInteractive && !name && !value && hasChildren) {
+      for (const childRef of node.children) {
+        this.renderTree(childRef, nodes, lines, indent, false);
+      }
+      return;
+    }
 
     let line = indent;
 
     // Add @ref tag for interactive elements
-    if (INTERACTIVE_ROLES.has(role)) {
+    if (isInteractive) {
       line += `[${ref}] `;
     }
 
-    // Role icon/indicator
+    // Role icon/indicator (compact format, no emoji)
     switch (role) {
       case "heading":
         line += `# ${name}`;
         break;
       case "link":
-        line += `🔗 ${name || "(link)"}`;
+        line += `LINK ${name || "(link)"}`;
         break;
       case "button":
-        line += `[BTN] "${name || "(button)"}"`;
+        line += `BTN "${name || "(button)"}"`;
         break;
       case "textbox":
       case "searchbox":
-        line += `[INPUT] ${name || "(text field)"}${value ? ` = "${value}"` : ""}`;
+        line += `INPUT ${name || "(text field)"}${value ? ` = "${value}"` : ""}`;
         break;
       case "checkbox":
       case "radio":
       case "switch":
-        line += `[${checked === "true" ? "☑" : "☐"}] ${name || role}`;
+        line += `[${checked === "true" ? "x" : " "}] ${name || role}`;
         break;
       case "combobox":
       case "listbox":
-        line += `[SELECT] ${name || role}${value ? ` = "${value}"` : ""}`;
+        line += `SELECT ${name || role}${value ? ` = "${value}"` : ""}`;
         break;
       case "image":
-        line += `[IMG] ${name || "(image)"}`;
+        line += `IMG ${name || "(image)"}`;
         break;
       case "paragraph":
         line += name || "";
@@ -225,27 +258,27 @@ export class AccessibilityTree {
         line += `"${name}"`;
         break;
       case "navigation":
-        line += `[NAV] ${name || "navigation"}`;
+        line += `NAV ${name || "navigation"}`;
         break;
       case "list":
-        line += `[LIST]`;
+        line += `LIST`;
         break;
       case "listitem":
-        line += `  • ${name || ""}`;
+        line += `- ${name || ""}`;
         break;
       case "table":
-        line += `[TABLE] ${name || ""}`;
+        line += `TABLE ${name || ""}`;
         break;
       case "alert":
       case "note":
-        line += `[NOTE] ${name}`;
+        line += `NOTE ${name}`;
         break;
       case "menu":
       case "menubar":
-        line += `[MENU] ${name || ""}`;
+        line += `MENU ${name || ""}`;
         break;
       case "tab":
-        line += `[TAB] ${name || ""}${node.selected ? " (selected)" : ""}`;
+        line += `TAB ${name || ""}${node.selected ? " (selected)" : ""}`;
         break;
       default:
         if (name) line += `${role}: ${name}`;
@@ -255,7 +288,7 @@ export class AccessibilityTree {
     line = line.trim();
     if (line) lines.push(line);
 
-    const childIndent = indent + "  ";
+    const childIndent = indent + " ";
     for (const childRef of node.children) {
       this.renderTree(childRef, nodes, lines, childIndent, false);
     }

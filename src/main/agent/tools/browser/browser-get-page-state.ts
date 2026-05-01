@@ -8,7 +8,7 @@ export function executeBrowserGetPageState(browser: BrowserManager): ToolHandler
     async execute(args) {
       const tabId = args.tabId as string | undefined;
       const pageState = browser.getPageState(tabId);
-      const snapshot = await browser.getSnapshot(true, tabId);
+      const snapshot = await browser.getSnapshot(false, tabId);
       return {
         success: true,
         result: JSON.stringify(
