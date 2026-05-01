@@ -413,6 +413,7 @@ export class BrowserManager {
   private statePushCallback?: (state: BrowserState) => void;
   private popupCallback?: (tabId: string, url: string, sourceTabId: string) => void;
   private _screenshotQuality = 80;
+  private tabActivationHistory: string[] = [];
 
   setScreenshotQuality(quality: number): void {
     this._screenshotQuality = Math.max(10, Math.min(100, quality));
@@ -534,9 +535,24 @@ export class BrowserManager {
     session.cleanup();
     this.sessions.delete(tabId);
 
+    // Clean closed tab from history
+    this.tabActivationHistory = this.tabActivationHistory.filter((id) => id !== tabId);
+
     if (this.activeTabId === tabId) {
-      const remaining = [...this.sessions.keys()];
-      this.activeTabId = remaining[0];
+      // Restore the most recently active tab that still exists
+      let restored = false;
+      while (this.tabActivationHistory.length > 0) {
+        const prev = this.tabActivationHistory.pop()!;
+        if (this.sessions.has(prev)) {
+          this.activeTabId = prev;
+          restored = true;
+          break;
+        }
+      }
+      if (!restored) {
+        const remaining = [...this.sessions.keys()];
+        this.activeTabId = remaining[0];
+      }
       this.repositionViews();
     }
 
@@ -544,7 +560,10 @@ export class BrowserManager {
   }
 
   setActiveTab(tabId: string): void {
-    if (this.sessions.has(tabId)) {
+    if (this.sessions.has(tabId) && this.activeTabId !== tabId) {
+      if (this.activeTabId) {
+        this.tabActivationHistory.push(this.activeTabId);
+      }
       this.activeTabId = tabId;
       this.repositionViews();
     }
