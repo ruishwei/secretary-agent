@@ -661,6 +661,24 @@ export class BrowserManager {
     return this.resolveSession(tabId).screenshot(quality ?? this._screenshotQuality);
   }
 
+  async getPageHtml(tabId?: string): Promise<string> {
+    const session = this.resolveSession(tabId);
+    const result = await session.cdp.send<{ result?: { value: string } }>(
+      "Runtime.evaluate",
+      { expression: "document.documentElement.outerHTML", returnByValue: true }
+    );
+    return result?.result?.value ?? "";
+  }
+
+  async getPageText(tabId?: string): Promise<string> {
+    const session = this.resolveSession(tabId);
+    const result = await session.cdp.send<{ result?: { value: string } }>(
+      "Runtime.evaluate",
+      { expression: "document.body ? document.body.innerText : ''", returnByValue: true }
+    );
+    return result?.result?.value ?? "";
+  }
+
   async refresh(tabId?: string): Promise<void> {
     return this.resolveSession(tabId).refresh();
   }

@@ -518,6 +518,54 @@ export const SESSION_SEARCH: ToolDefinition = {
   },
 };
 
+export const BROWSER_EXPORT_SCREENSHOT: ToolDefinition = {
+  name: "browser_export_screenshot",
+  description:
+    "Capture the current viewport as a PNG screenshot and save it to a file. If no filePath is provided, saves to the workspace exports directory with an auto-generated filename. Returns the full file path and size.",
+  input_schema: {
+    type: "object",
+    properties: {
+      filePath: {
+        type: "string",
+        description: "Optional. Full path where the screenshot should be saved. If omitted, auto-generated in workspace exports/.",
+      },
+      ...TAB_ID_PROPERTY,
+    },
+  },
+};
+
+export const BROWSER_EXPORT_HTML: ToolDefinition = {
+  name: "browser_export_html",
+  description:
+    "Save the full page HTML source to a file. If no filePath is provided, saves to the workspace exports directory with an auto-generated filename. Returns the full file path and size.",
+  input_schema: {
+    type: "object",
+    properties: {
+      filePath: {
+        type: "string",
+        description: "Optional. Full path where the HTML should be saved. If omitted, auto-generated in workspace exports/.",
+      },
+      ...TAB_ID_PROPERTY,
+    },
+  },
+};
+
+export const BROWSER_EXPORT_MARKDOWN: ToolDefinition = {
+  name: "browser_export_markdown",
+  description:
+    "Convert the current page content to Markdown and save to a file. Useful for saving articles, documentation, or any web content for offline reference. If no filePath is provided, saves to the workspace exports directory. Returns the full file path and size.",
+  input_schema: {
+    type: "object",
+    properties: {
+      filePath: {
+        type: "string",
+        description: "Optional. Full path where the Markdown should be saved. If omitted, auto-generated in workspace exports/.",
+      },
+      ...TAB_ID_PROPERTY,
+    },
+  },
+};
+
 export const BROWSER_TODO_WRITE: ToolDefinition = {
   name: "browser_todo_write",
   description:
@@ -564,6 +612,9 @@ export const BROWSER_TOOLS: ToolDefinition[] = [
   BROWSER_SWITCH_TAB,
   BROWSER_LIST_TABS,
   BROWSER_TODO_WRITE,
+  BROWSER_EXPORT_SCREENSHOT,
+  BROWSER_EXPORT_HTML,
+  BROWSER_EXPORT_MARKDOWN,
 ];
 
 export const SKILL_TOOLS: ToolDefinition[] = [

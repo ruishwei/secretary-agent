@@ -64,6 +64,11 @@ export const IPC = {
   SKILLS_GET_CONTENT: "skills:get-content",
   SKILLS_DELETE: "skills:delete",
 
+  // Skill Hub (ClawHub)
+  SKILL_HUB_SEARCH: "skills:hub-search",
+  SKILL_HUB_GET_SKILL: "skills:hub-get-skill",
+  SKILL_HUB_INSTALL: "skills:hub-install",
+
   // Workspace
   WORKSPACE_GET_PATHS: "workspace:get-paths",
   WORKSPACE_OPEN_FOLDER: "workspace:open-folder",

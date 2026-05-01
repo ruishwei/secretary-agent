@@ -11,6 +11,7 @@ import { registerBrowserTools } from "../agent/tools/browser/register-browser-to
 import { registerSkillTools } from "../agent/tools/skills/register-skill-tools";
 import { registerMemoryTools } from "../agent/tools/memory/register-memory-tools";
 import { SkillManager } from "../skills/skill-manager";
+import { SkillHubClient } from "../skills/skill-hub-client";
 import { MemoryStore } from "../memory/memory-store";
 import { PasswordStore } from "../password-manager/password-store";
 import { getConfig } from "../utils/config";
@@ -44,6 +45,10 @@ function ensureMemoryStore(): MemoryStore {
     _memoryStore = new MemoryStore(getConfig().memoryPath, getConfig().sessionsPath);
   }
   return _memoryStore;
+}
+
+function ensureHubClient(): SkillHubClient {
+  return new SkillHubClient();
 }
 
 function getActiveLlmConfig(): {
@@ -633,6 +638,44 @@ export function registerIpcHandlers(): void {
     const mgr = ensureSkillManager();
     await mgr.initialize();
     return mgr.delete(name);
+  });
+
+  // ===== Skill Hub (ClawHub) =====
+
+  ipcMain.handle(IPC.SKILL_HUB_SEARCH, async (_event, query: string, limit?: number, offset?: number) => {
+    try {
+      const hub = ensureHubClient();
+      return await hub.search(query, limit, offset);
+    } catch (err: any) {
+      logger.error(`Hub search error: ${err.message}`);
+      return { results: [], error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.SKILL_HUB_GET_SKILL, async (_event, slug: string) => {
+    try {
+      const hub = ensureHubClient();
+      return await hub.getSkill(slug);
+    } catch (err: any) {
+      logger.error(`Hub getSkill error: ${err.message}`);
+      return { error: err.message };
+    }
+  });
+
+  ipcMain.handle(IPC.SKILL_HUB_INSTALL, async (_event, slug: string) => {
+    try {
+      const hub = ensureHubClient();
+      const skillsPath = getConfig().skillsPath;
+      const result = await hub.downloadAndInstall(slug, skillsPath);
+      if (result.success) {
+        const mgr = ensureSkillManager();
+        await mgr.initialize();
+      }
+      return result;
+    } catch (err: any) {
+      logger.error(`Hub install error: ${err.message}`);
+      return { success: false, error: err.message };
+    }
   });
 
   // ===== Workspace =====

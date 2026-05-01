@@ -150,6 +150,22 @@ const electronAPI = {
     getContent: (name: string): Promise<string | null> => ipcRenderer.invoke(IPC.SKILLS_GET_CONTENT, name),
     delete: (name: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke(IPC.SKILLS_DELETE, name),
+
+    // Hub (ClawHub)
+    hubSearch: (query: string, limit?: number, offset?: number): Promise<{
+      results: Array<{ slug: string; name: string; description: string; version?: string; category?: string; author?: string; downloads?: number }>;
+      total?: number;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC.SKILL_HUB_SEARCH, query, limit, offset),
+
+    hubGetSkill: (slug: string): Promise<{
+      slug: string; name: string; description: string; version: string; category: string;
+      author?: string; downloads?: number; skillMdContent?: string;
+      error?: string;
+    }> => ipcRenderer.invoke(IPC.SKILL_HUB_GET_SKILL, slug),
+
+    hubInstall: (slug: string): Promise<{ success: boolean; skillName?: string; error?: string }> =>
+      ipcRenderer.invoke(IPC.SKILL_HUB_INSTALL, slug),
   },
 
   // Workspace

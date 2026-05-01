@@ -12,6 +12,9 @@ import { executeBrowserWait } from "./browser-wait";
 import { executeBrowserGetPageState } from "./browser-get-page-state";
 import { executeBrowserConsole } from "./browser-console";
 import { executeBrowserVision } from "./browser-vision";
+import { executeBrowserExportScreenshot } from "./browser-export-screenshot";
+import { executeBrowserExportHtml } from "./browser-export-html";
+import { executeBrowserExportMarkdown } from "./browser-export-markdown";
 
 import { executeBrowserFillForm } from "./browser-fill-form";
 import { executeBrowserRequestReview } from "./browser-request-review";
@@ -20,6 +23,7 @@ import { executeBrowserCloseTab } from "./browser-close-tab";
 import { executeBrowserSwitchTab } from "./browser-switch-tab";
 import { executeBrowserListTabs } from "./browser-list-tabs";
 import { executeBrowserTodoWrite } from "./browser-todo-write";
+import TurndownService from "turndown";
 
 const logger = new Logger("BrowserTools");
 
@@ -62,6 +66,10 @@ export function registerBrowserTools(executor: ToolExecutor, ctx: ToolFactoryCon
     executeBrowserSwitchTab(browser),
     executeBrowserListTabs(browser),
     executeBrowserTodoWrite(),
+
+    executeBrowserExportScreenshot(browser),
+    executeBrowserExportHtml(browser),
+    executeBrowserExportMarkdown(browser, new TurndownService()),
   ];
 
   for (const tool of tools) {
