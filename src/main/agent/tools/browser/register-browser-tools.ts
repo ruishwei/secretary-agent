@@ -44,7 +44,7 @@ export function registerBrowserTools(executor: ToolExecutor, ctx: ToolFactoryCon
     executeBrowserGetPageState(browser),
     executeBrowserConsole(browser),
     executeBrowserVision(browser, llm!),
-    executeBrowserExtract(browser, llm!),
+    executeBrowserExtract(browser),
     executeBrowserFillForm(browser),
     executeBrowserRequestReview(),
     executeBrowserNewTab(browser, (tabId, url) => {

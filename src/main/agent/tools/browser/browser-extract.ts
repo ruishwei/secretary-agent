@@ -1,18 +1,17 @@
 import type { ToolHandler } from "../../tool-executor";
 import type { BrowserManager } from "../../../browser/browser-manager";
-import type { LLMClient } from "../../llm-client";
 import { BROWSER_EXTRACT } from "../../../../shared/tool-schemas";
 
-const MAX_TEXT_CHARS = 12000;
+const MAX_CHARS = 15000;
 
-export function executeBrowserExtract(browser: BrowserManager, llm: LLMClient): ToolHandler {
+export function executeBrowserExtract(browser: BrowserManager): ToolHandler {
   return {
     definition: BROWSER_EXTRACT,
     async execute(args) {
       const what = args.what as string;
       const tabId = args.tabId as string | undefined;
 
-      // Get compact body text (fast, small) + lightweight AXTree for structure
+      // Fetch body text + shallow AXTree in parallel — no LLM call
       const [bodyText, snapshot] = await Promise.all([
         browser.evaluateJs("document.body.innerText", tabId).catch(() => ""),
         browser.getSnapshot(false, tabId),
@@ -24,30 +23,20 @@ export function executeBrowserExtract(browser: BrowserManager, llm: LLMClient): 
         textContent = JSON.parse(textContent);
       }
 
-      // Combine: body text (primary) + AXTree summary (structural context)
+      // Combine and truncate: body text (primary) + interactive elements (structure)
       let pageText = `### Page Text\n${textContent}\n\n### Interactive Elements\n${snapshot.text}`;
-      if (pageText.length > MAX_TEXT_CHARS) {
-        const half = Math.floor(MAX_TEXT_CHARS / 2);
-        pageText = pageText.slice(0, half) + "\n... (truncated)\n" + pageText.slice(-half);
+      if (pageText.length > MAX_CHARS) {
+        const half = Math.floor(MAX_CHARS / 2);
+        pageText = pageText.slice(0, half) + "\n... (truncated: middle)\n" + pageText.slice(-half);
       }
 
-      const systemPrompt = `You are a precise data extraction tool. Extract the requested information from the page content provided. Return ONLY valid JSON — no markdown, no explanation, no code fences. If the data is not found, return {"error": "not found"}. Use the exact format the user requests.`;
+      const elementCount = snapshot.nodes.size;
 
-      const userMessage = `Page content:
-${pageText}
-
-Extract this information: ${what}`;
-
-      try {
-        const answer = await llm.simpleQuery(systemPrompt, userMessage);
-        return { success: true, result: answer, snapshot: snapshot.text };
-      } catch (err: any) {
-        return {
-          success: false,
-          result: "",
-          error: `Extraction failed: ${err.message}`,
-        };
-      }
+      return {
+        success: true,
+        result: `Extraction target: ${what}\nElements: ${elementCount}\n\n${pageText}`,
+        snapshot: snapshot.text,
+      };
     },
   };
 }

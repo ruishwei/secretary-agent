@@ -176,7 +176,7 @@ export const BROWSER_CONSOLE: ToolDefinition = {
 export const BROWSER_EXTRACT: ToolDefinition = {
   name: "browser_extract",
   description:
-    "Extract structured content from the current page. Specify what data to extract (e.g., 'table of recent orders', 'all article titles', 'form field labels and values').",
+    "Collect page content (body text + interactive elements). Returns the page text content and a compact snapshot for the LLM to analyze. Use when you need to extract specific data from the page — the returned content is yours to process, no secondary LLM call is involved.",
   input_schema: {
     type: "object",
     properties: {
