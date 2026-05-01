@@ -1,6 +1,6 @@
 import { webContents, BrowserWindow, WebContentsView } from "electron";
 import { CDPClient } from "./cdp-client";
-import { AccessibilityTree, type AXSnapshot } from "./accessibility-tree";
+import { AccessibilityTree, type AXSnapshot, INTERACTIVE_ROLES } from "./accessibility-tree";
 import { Logger } from "../utils/logger";
 
 const logger = new Logger("Browser");
@@ -35,6 +35,9 @@ export class TabSession {
   title = "";
   favicon = "";
   snapshot: AXSnapshot | null = null;
+  // Snapshot state at the time the LLM planned its tool calls.
+  // Used to detect stale @ref IDs when a tool refreshes the snapshot mid-turn.
+  planSnapshotNodes: Map<string, { role: string; name: string; backendNodeId: number }> | null = null;
   isLoading = false;
   canGoBack = false;
   canGoForward = false;
@@ -248,14 +251,82 @@ export class TabSession {
     if (!this.snapshot) {
       throw new Error("No page snapshot available. Navigate first.");
     }
-    const backendNodeId = this.axTree.resolveRef(ref, this.snapshot.nodes);
-    if (!backendNodeId) {
-      throw new Error(`Element ${ref} not found. Try refreshing with browser_snapshot.`);
+
+    // Detect stale ref: compare current AX node against the plan-time snapshot.
+    // If the element at this ref changed (different backendNodeId), the snapshot
+    // was refreshed by a prior tool call in this turn. Find the original element
+    // by its backendNodeId in the current snapshot.
+    let effectiveRef = ref;
+    let effectiveBackendNodeId = this.axTree.resolveRef(ref, this.snapshot.nodes);
+
+    if (this.planSnapshotNodes) {
+      logger.info(`[clickByRef] planSnapshotNodes has ${this.planSnapshotNodes.size} entries`);
+    } else {
+      logger.info(`[clickByRef] planSnapshotNodes is NULL — plan snapshot was not captured or was cleared`);
+    }
+
+    if (this.planSnapshotNodes && effectiveBackendNodeId) {
+      const planned = this.planSnapshotNodes.get(ref);
+      if (planned && planned.backendNodeId !== effectiveBackendNodeId) {
+        logger.warn(
+          `[clickByRef] ${ref} element changed: plan-time was role="${planned.role}" name="${planned.name}" ` +
+          `(backendNodeId=${planned.backendNodeId}), now is role="${this.snapshot.nodes.get(ref)?.role}" ` +
+          `(backendNodeId=${effectiveBackendNodeId}). Searching current snapshot for original element...`
+        );
+        // Search current snapshot for a node with the plan-time backendNodeId
+        let foundRef: string | null = null;
+        for (const [r, node] of this.snapshot.nodes) {
+          if (node.backendNodeId === planned.backendNodeId) {
+            foundRef = r;
+            break;
+          }
+        }
+        if (foundRef) {
+          logger.info(`[clickByRef] recovered: original element now at ${foundRef}`);
+          effectiveRef = foundRef;
+          effectiveBackendNodeId = planned.backendNodeId;
+        } else {
+          // Element may have been removed or is not in the current AX tree.
+          // Fall through and try the original ref anyway (best effort).
+          logger.warn(`[clickByRef] original element (backendNodeId=${planned.backendNodeId}) not found in current snapshot`);
+        }
+      }
+    }
+
+    if (!effectiveBackendNodeId) {
+      throw new Error(`Element ${effectiveRef} not found. Try refreshing with browser_snapshot.`);
     }
     try {
-      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", { backendNodeId });
+      const axNode = this.snapshot.nodes.get(effectiveRef);
+      if (axNode) {
+        logger.info(`[clickByRef] ${effectiveRef} AX: role="${axNode.role}" name="${axNode.name}" children=${axNode.children.length}`);
+      }
+
+      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", { backendNodeId: effectiveBackendNodeId });
       const objectId = resolveResult?.object?.objectId;
-      if (!objectId) throw new Error(`Could not resolve ${ref} to a DOM node`);
+      if (!objectId) throw new Error(`Could not resolve ${effectiveRef} to a DOM node`);
+
+      // Debug: log the ACTUAL DOM element
+      try {
+        const descResult = await this.cdp.send<any>("Runtime.callFunctionOn", {
+          functionDeclaration: "function() { return this.outerHTML?.substring(0, 300) || '[nodeType=' + this.nodeType + '] ' + (this.textContent?.substring(0, 100) || ''); }",
+          objectId,
+          returnByValue: true,
+        });
+        logger.info(`[clickByRef] ${effectiveRef} DOM: ${descResult?.result?.value || "(none)"}`);
+      } catch {
+        logger.warn(`[clickByRef] ${effectiveRef} — could not read outerHTML`);
+      }
+
+      // If the AX node is a non-interactive text node, refuse to click.
+      // Text nodes inside links/buttons should not get @ref assignments in the first
+      // place — clicking them via parentElement walk-up silently clicks the wrong thing.
+      if (axNode && !INTERACTIVE_ROLES.has(axNode.role)) {
+        throw new Error(
+          `Ref ${effectiveRef} is a "${axNode.role}" text node, not a clickable element. ` +
+          `Use browser_snapshot to find the correct @ref for the button or link you want to click.`
+        );
+      }
 
       // Prefer Runtime.callFunctionOn: dispatches click directly on the element,
       // bypassing overlay hit-testing (e.g. autocomplete suggestions covering buttons)
@@ -263,22 +334,27 @@ export class TabSession {
         functionDeclaration: "function() { this.click(); }",
         objectId,
       });
-      // If callFunctionOn threw (not implemented, detached node, etc.), fall back to coordinates
       if (callResult?.exceptionDetails) {
+        logger.warn(`[clickByRef] ${effectiveRef} callFunctionOn failed: ${JSON.stringify(callResult.exceptionDetails)} — falling back`);
         const boxModel = await this.cdp.send<any>("DOM.getBoxModel", { objectId });
         if (boxModel?.model?.content) {
           const quad = boxModel.model.content;
           const x = (quad[0] + quad[4]) / 2;
           const y = (quad[1] + quad[5]) / 2;
+          logger.info(`[clickByRef] ${effectiveRef} coordinates fallback: x=${x}, y=${y}`);
           await this.cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 });
           await this.cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 });
         } else {
-          await this.cdp.send("DOM.focus", { backendNodeId });
+          logger.info(`[clickByRef] ${effectiveRef} no box model — using focus+Enter`);
+          await this.cdp.send("DOM.focus", { backendNodeId: effectiveBackendNodeId });
           await this.cdp.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter" });
         }
+      } else {
+        logger.info(`[clickByRef] ${effectiveRef} callFunctionOn succeeded`);
       }
     } catch (err) {
-      throw new Error(`Failed to click ${ref}: ${err}`);
+      logger.error(`[clickByRef] ${effectiveRef} error: ${err}`);
+      throw new Error(`Failed to click ${effectiveRef}: ${err}`);
     }
     await this.delay(500);
     return this.getSnapshot();
@@ -288,17 +364,63 @@ export class TabSession {
     if (!this.snapshot) {
       throw new Error("No page snapshot available. Navigate first.");
     }
-    const backendNodeId = this.axTree.resolveRef(ref, this.snapshot.nodes);
-    if (!backendNodeId) throw new Error(`Element ${ref} not found.`);
+
+    // Detect stale ref (same logic as clickByRef)
+    let effectiveRef = ref;
+    let effectiveBackendNodeId = this.axTree.resolveRef(ref, this.snapshot.nodes);
+
+    if (this.planSnapshotNodes) {
+      logger.info(`[typeByRef] planSnapshotNodes has ${this.planSnapshotNodes.size} entries`);
+    } else {
+      logger.info(`[typeByRef] planSnapshotNodes is NULL`);
+    }
+
+    if (this.planSnapshotNodes && effectiveBackendNodeId) {
+      const planned = this.planSnapshotNodes.get(ref);
+      if (planned && planned.backendNodeId !== effectiveBackendNodeId) {
+        logger.warn(
+          `[typeByRef] ${ref} element changed: plan-time was role="${planned.role}" name="${planned.name}" ` +
+          `(backendNodeId=${planned.backendNodeId}), now is (backendNodeId=${effectiveBackendNodeId}). Searching...`
+        );
+        let foundRef: string | null = null;
+        for (const [r, node] of this.snapshot.nodes) {
+          if (node.backendNodeId === planned.backendNodeId) {
+            foundRef = r;
+            break;
+          }
+        }
+        if (foundRef) {
+          logger.info(`[typeByRef] recovered: original element now at ${foundRef}`);
+          effectiveRef = foundRef;
+          effectiveBackendNodeId = planned.backendNodeId;
+        } else {
+          logger.warn(`[typeByRef] original element (backendNodeId=${planned.backendNodeId}) not found`);
+        }
+      }
+    }
+
+    if (!effectiveBackendNodeId) throw new Error(`Element ${effectiveRef} not found.`);
 
     try {
       // Resolve to objectId so we can call JS directly on the element
-      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", { backendNodeId });
+      const resolveResult = await this.cdp.send<any>("DOM.resolveNode", { backendNodeId: effectiveBackendNodeId });
       const objectId = resolveResult?.object?.objectId;
-      if (!objectId) throw new Error(`Could not resolve ${ref} to a DOM node`);
+      if (!objectId) throw new Error(`Could not resolve ${effectiveRef} to a DOM node`);
+
+      // Debug: log the element being typed into
+      try {
+        const descResult = await this.cdp.send<any>("Runtime.callFunctionOn", {
+          functionDeclaration: "function() { return this.outerHTML?.substring(0, 300) || this.tagName; }",
+          objectId,
+          returnByValue: true,
+        });
+        logger.info(`[typeByRef] ${effectiveRef} backendNodeId=${effectiveBackendNodeId} outerHTML=${descResult?.result?.value || "(none)"}`);
+      } catch {
+        logger.warn(`[typeByRef] ${effectiveRef} backendNodeId=${effectiveBackendNodeId} — could not read outerHTML`);
+      }
 
       // Focus first
-      await this.cdp.send("DOM.focus", { backendNodeId });
+      await this.cdp.send("DOM.focus", { backendNodeId: effectiveBackendNodeId });
       await this.delay(100);
 
       // Use Runtime.callFunctionOn to set value via native setter — bypasses
@@ -326,8 +448,9 @@ export class TabSession {
       // without triggering page-level Escape handlers (e.g. modals)
       await this.cdp.send("Runtime.evaluate", { expression: "document.activeElement?.blur()" });
       await this.delay(50);
-      await this.cdp.send("DOM.focus", { backendNodeId });
+      await this.cdp.send("DOM.focus", { backendNodeId: effectiveBackendNodeId });
     } catch (err) {
+      logger.error(`[typeByRef] ${effectiveRef} error: ${err}`);
       throw new Error(`Failed to type into ${ref}: ${err}`);
     }
     await this.delay(300);
@@ -626,6 +749,13 @@ export class BrowserManager {
 
   getSession(tabId: string): TabSession | undefined {
     return this.sessions.get(tabId);
+  }
+
+  /** Iterate all sessions. Used by agent-loop to capture plan-time snapshot state. */
+  forEachSession(fn: (session: TabSession) => void): void {
+    for (const session of this.sessions.values()) {
+      fn(session);
+    }
   }
 
   getAllTabs(): Array<{ tabId: string; url: string; title: string; favicon?: string; isActive: boolean }> {

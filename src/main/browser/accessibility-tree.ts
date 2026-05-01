@@ -27,7 +27,7 @@ export interface AXSnapshot {
 }
 
 // Interactive roles that get @ref IDs
-const INTERACTIVE_ROLES = new Set([
+export const INTERACTIVE_ROLES = new Set([
   "link", "button", "textbox", "searchbox", "combobox", "listbox",
   "menuitem", "menuitemcheckbox", "menuitemradio", "option",
   "radio", "checkbox", "switch", "tab", "treeitem", "slider",
