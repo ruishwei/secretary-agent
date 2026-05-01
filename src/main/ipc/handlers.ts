@@ -241,10 +241,15 @@ export function registerIpcHandlers(): void {
 
       agentRunning = true;
 
+      // Extract image data URLs from attachments
+      const images = req.attachments
+        ?.filter((a: any) => a.dataUrl?.startsWith("data:image/"))
+        .map((a: any) => a.dataUrl);
+
       // Run agent loop asynchronously, streaming events to renderer
       (async () => {
         try {
-          for await (const event of loop.run(req.text)) {
+          for await (const event of loop.run(req.text, images)) {
             sendAgentEvent(win, event);
 
             if (event.type === "done" || event.type === "error") {

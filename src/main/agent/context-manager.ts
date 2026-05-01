@@ -36,10 +36,18 @@ export class ContextManager {
   }
 
   /**
-   * Add a user text message.
+   * Add a user text message, optionally with attached images.
    */
-  addUserMessage(text: string) {
-    this.addMessage({ role: "user", content: text });
+  addUserMessage(text: string, images?: string[]) {
+    if (images && images.length > 0) {
+      const blocks: LLMContentBlock[] = [{ type: "text", text }];
+      for (const src of images) {
+        blocks.push({ type: "image", source: src });
+      }
+      this.addMessage({ role: "user", content: blocks });
+    } else {
+      this.addMessage({ role: "user", content: text });
+    }
   }
 
   /**

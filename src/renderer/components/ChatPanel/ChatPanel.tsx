@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useStore } from "../../store";
 import type { ChatMessage } from "../../../shared/types";
 import { MessageBubble } from "./MessageBubble";
-import { InputBar } from "./InputBar";
+import { InputBar, type Attachment } from "./InputBar";
 
 interface ChatPanelProps {
   onSettingsClick: () => void;
@@ -115,13 +115,13 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
   ]);
 
   const handleSend = useCallback(
-    async (text: string) => {
-      if (!text.trim() || isStreaming) return;
+    async (text: string, attachments?: Attachment[]) => {
+      if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
 
       const userMsg: ChatMessage = {
         id: `msg-${Date.now()}`,
         role: "user",
-        content: text,
+        content: text || "[Image]",
         timestamp: Date.now(),
       };
       addMessage(userMsg);
@@ -140,7 +140,7 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
 
       try {
         if (window.electronAPI?.sendMessage) {
-          await window.electronAPI.sendMessage({ text });
+          await window.electronAPI.sendMessage({ text, attachments });
         }
       } catch (err) {
         updateLastAssistantMessage(`**Error:** Failed to send message: ${err}`);

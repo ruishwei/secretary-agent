@@ -94,14 +94,14 @@ export class AgentLoop {
    * Process a user message through the agent loop.
    * Yields AgentEvents for streaming back to the renderer.
    */
-  async *run(userMessage: string): AsyncGenerator<AgentEvent> {
+  async *run(userMessage: string, images?: string[]): AsyncGenerator<AgentEvent> {
     if (this.running) {
       yield { type: "error", message: "Agent is already running.", recoverable: true };
       return;
     }
 
     this.turnCount = 0;
-    this.context.addUserMessage(userMessage);
+    this.context.addUserMessage(userMessage, images);
     yield* this.runLoop();
   }
 

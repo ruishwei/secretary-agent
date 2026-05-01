@@ -19,7 +19,7 @@ export interface LLMMessage {
 }
 
 export interface LLMContentBlock {
-  type: "text" | "tool_use" | "tool_result" | "thinking";
+  type: "text" | "tool_use" | "tool_result" | "thinking" | "image";
   text?: string;
   thinking?: string;
   signature?: string;
@@ -29,6 +29,8 @@ export interface LLMContentBlock {
   tool_use_id?: string;
   content?: string;
   is_error?: boolean;
+  /** base64 data URL for image blocks: data:image/png;base64,... */
+  source?: string;
 }
 
 export interface LLMResponse {
@@ -55,6 +57,18 @@ function toAnthropicMessages(messages: LLMMessage[]) {
       switch (block.type) {
         case "text":
           return { type: "text" as const, text: block.text! };
+        case "image": {
+          // Standard Anthropic vision format: base64 image source
+          const m = block.source?.match(/^data:image\/(\w+);base64,(.+)$/);
+          return {
+            type: "image" as const,
+            source: {
+              type: "base64" as const,
+              media_type: m ? `image/${m[1]}` : "image/png",
+              data: m ? m[2] : block.source!,
+            },
+          };
+        }
         case "thinking":
           return {
             type: "thinking" as const,
@@ -102,22 +116,26 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
       for (const block of m.content) {
         if (block.type === "text" && block.text) {
           parts.push({ type: "text", text: block.text });
+        } else if (block.type === "image" && block.source) {
+          // Standard OpenAI vision format
+          parts.push({ type: "image_url", image_url: { url: block.source } });
         } else if (block.type === "thinking") {
-          // DeepSeek: pass thinking back as reasoning_content at message level,
-          // or inline in the content array. Using reasoning_content is preferred.
+          // DeepSeek: pass thinking back as reasoning_content at message level only.
+          // Do NOT add inline {type:"thinking"} to content parts — it's not standard OpenAI format.
           reasoningContent += block.thinking;
-          // Also include inline for providers that expect it in content
-          parts.push({ type: "thinking", thinking: block.thinking } as any);
         } else if (block.type === "tool_use") {
-          // Flush accumulated text+thinking before tool_use
-          if (parts.length > 0) {
-            const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+          // Flush accumulated text/image+thinking before tool_use
+          if (parts.length > 0 || reasoningContent) {
+            const msg: Record<string, unknown> = {
+              role: m.role,
+              content: parts.length > 0 ? [...parts] : "",
+            };
             if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
             result.push(msg as any);
             parts.length = 0;
-            reasoningContent = "";
+            // Keep reasoningContent — DeepSeek requires it on the tool_calls message too
           }
-          result.push({
+          const tcMsg: Record<string, unknown> = {
             role: "assistant",
             tool_calls: [
               {
@@ -126,11 +144,17 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
                 function: { name: block.name!, arguments: JSON.stringify(block.input) },
               },
             ],
-          });
+          };
+          if (reasoningContent) (tcMsg as any).reasoning_content = reasoningContent;
+          result.push(tcMsg as any);
+          reasoningContent = "";
         } else if (block.type === "tool_result") {
-          // Flush accumulated text+thinking before tool_result
-          if (parts.length > 0) {
-            const msg: Record<string, unknown> = { role: m.role, content: [...parts] };
+          // Flush accumulated text/image+thinking before tool_result
+          if (parts.length > 0 || reasoningContent) {
+            const msg: Record<string, unknown> = {
+              role: m.role,
+              content: parts.length > 0 ? [...parts] : "",
+            };
             if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
             result.push(msg as any);
             parts.length = 0;
@@ -143,8 +167,11 @@ function toOpenAIMessages(messages: LLMMessage[]): OpenAI.Chat.ChatCompletionMes
           });
         }
       }
-      if (parts.length > 0) {
-        const msg: Record<string, unknown> = { role: m.role, content: parts };
+      if (parts.length > 0 || reasoningContent) {
+        const msg: Record<string, unknown> = {
+          role: m.role,
+          content: parts.length > 0 ? parts : "",
+        };
         if (reasoningContent) (msg as any).reasoning_content = reasoningContent;
         result.push(msg as any);
       }

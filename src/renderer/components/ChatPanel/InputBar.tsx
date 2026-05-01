@@ -1,10 +1,15 @@
-import React, { useCallback, useEffect, useRef } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useStore } from "../../store";
+
+export interface Attachment {
+  name: string;
+  dataUrl: string;
+}
 
 interface Props {
   value: string;
   onChange: (value: string) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, attachments?: Attachment[]) => void;
   onAbort: () => void;
   isStreaming: boolean;
   onSettingsClick: () => void;
@@ -24,18 +29,47 @@ function parseShortcut(combo: string): { ctrl: boolean; alt: boolean; shift: boo
 export function InputBar({ value, onChange, onSend, onAbort, isStreaming, onSettingsClick }: Props) {
   const voiceShortcut = useStore((s) => s.settings.shortcuts.voiceInput);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        if (value.trim() && !isStreaming) {
-          onSend(value);
+        if ((value.trim() || attachments.length > 0) && !isStreaming) {
+          onSend(value, attachments.length > 0 ? attachments : undefined);
         }
       }
     },
-    [value, isStreaming, onSend]
+    [value, attachments, isStreaming, onSend]
   );
+
+  // Paste interception for images
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageItems: DataTransferItem[] = [];
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        imageItems.push(items[i]);
+      }
+    }
+    if (imageItems.length > 0) {
+      e.preventDefault();
+      for (const item of imageItems) {
+        const blob = item.getAsFile();
+        if (!blob) continue;
+        const reader = new FileReader();
+        reader.onload = () => {
+          setAttachments((prev) => [
+            ...prev,
+            { name: `paste-${Date.now()}.png`, dataUrl: reader.result as string },
+          ]);
+        };
+        reader.readAsDataURL(blob);
+      }
+    }
+  }, []);
 
   // Voice input global shortcut
   useEffect(() => {
@@ -57,14 +91,76 @@ export function InputBar({ value, onChange, onSend, onAbort, isStreaming, onSett
   }, [voiceShortcut]);
 
   const handleAttachClick = useCallback(() => {
-    // TODO: file attachment
+    fileInputRef.current?.click();
   }, []);
+
+  const handleFileChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith("image/")) continue;
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachments((prev) => [
+          ...prev,
+          { name: file.name, dataUrl: reader.result as string },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    }
+    // Reset so the same file can be picked again
+    e.target.value = "";
+  }, []);
+
+  const handleRemoveAttachment = useCallback((index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const handleSendClick = useCallback(() => {
+    if ((!value.trim() && attachments.length === 0) || isStreaming) return;
+    onSend(value, attachments.length > 0 ? attachments : undefined);
+    setAttachments([]);
+  }, [value, attachments, isStreaming, onSend]);
 
   const btnBase =
     "p-1.5 rounded transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-700 flex-shrink-0";
 
   return (
     <div className="border-t border-gray-800">
+      {/* Attachment chips */}
+      {attachments.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 px-2 pt-2">
+          {attachments.map((att, i) => (
+            <div key={i} className="relative group">
+              <img
+                src={att.dataUrl}
+                alt={att.name}
+                className="h-10 w-10 rounded object-cover border border-gray-700"
+              />
+              <button
+                onClick={() => handleRemoveAttachment(i)}
+                className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-gray-800 border border-gray-600 text-gray-400 hover:text-white hover:bg-red-700 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" className="w-2.5 h-2.5">
+                  <path fillRule="evenodd" d="M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.75.75 0 1 1 1.06 1.06L9.06 8l3.22 3.22a.75.75 0 1 1-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 0 1-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06z" />
+                </svg>
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        onChange={handleFileChange}
+        className="hidden"
+      />
+
       {/* Main input area */}
       <div className="px-2 pt-2">
         <textarea
@@ -72,6 +168,7 @@ export function InputBar({ value, onChange, onSend, onAbort, isStreaming, onSett
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
           placeholder={isStreaming ? "Agent is working..." : "Type a command or /skill-name..."}
           disabled={isStreaming}
           rows={2}
@@ -139,8 +236,8 @@ export function InputBar({ value, onChange, onSend, onAbort, isStreaming, onSett
             </button>
           ) : (
             <button
-              onClick={() => value.trim() && onSend(value)}
-              disabled={!value.trim()}
+              onClick={handleSendClick}
+              disabled={!value.trim() && attachments.length === 0}
               className="p-1.5 rounded transition-colors text-gray-400 hover:text-gray-200 hover:bg-gray-700 disabled:opacity-30 disabled:cursor-not-allowed flex-shrink-0"
               title="Send (Enter)"
             >
