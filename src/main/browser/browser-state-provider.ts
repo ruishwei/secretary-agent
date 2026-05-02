@@ -41,6 +41,9 @@ export class BrowserStateProvider implements StateProvider {
   async buildSnapshotSection(): Promise<PromptSection | null> {
     try {
       const snapshot = await this.browserManager.getSnapshot();
+      // Capture plan-time snapshot state so browser tools can detect stale @ref IDs
+      // when the AX tree is refreshed mid-turn by a prior tool call.
+      this.browserManager.capturePlanSnapshots();
       return {
         id: "browser:snapshot",
         priority: 21,

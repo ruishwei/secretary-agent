@@ -751,10 +751,26 @@ export class BrowserManager {
     return this.sessions.get(tabId);
   }
 
-  /** Iterate all sessions. Used by agent-loop to capture plan-time snapshot state. */
-  forEachSession(fn: (session: TabSession) => void): void {
+  /** Capture current snapshot state as plan-time reference for stale @ref detection. */
+  capturePlanSnapshots(): void {
     for (const session of this.sessions.values()) {
-      fn(session);
+      if (session.snapshot) {
+        const planNodes = new Map<string, { role: string; name: string; backendNodeId: number }>();
+        for (const [ref, node] of session.snapshot.nodes) {
+          planNodes.set(ref, {
+            role: node.role,
+            name: node.name,
+            backendNodeId: node.backendNodeId,
+          });
+        }
+        session.planSnapshotNodes = planNodes;
+      }
+    }
+  }
+
+  clearPlanSnapshots(): void {
+    for (const session of this.sessions.values()) {
+      session.planSnapshotNodes = null;
     }
   }
 

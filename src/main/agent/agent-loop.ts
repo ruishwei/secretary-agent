@@ -274,27 +274,6 @@ export class AgentLoop {
           };
         }
 
-        // Capture plan-time snapshot state so tools can detect stale @ref IDs.
-        // If the LLM planned multiple tool calls from a single snapshot, and the first
-        // tool refreshes the AX tree, subsequent refs are compared against this capture.
-        const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
-        bm.forEachSession((session) => {
-          if (session.snapshot) {
-            const planNodes = new Map<string, { role: string; name: string; backendNodeId: number }>();
-            for (const [ref, node] of session.snapshot.nodes) {
-              planNodes.set(ref, {
-                role: node.role,
-                name: node.name,
-                backendNodeId: node.backendNodeId,
-              });
-            }
-            session.planSnapshotNodes = planNodes;
-            logger.info(`Plan snapshot captured: ${planNodes.size} nodes for tab ${session.tabId}`);
-          } else {
-            logger.warn(`Plan snapshot capture: session ${session.tabId} has no snapshot`);
-          }
-        });
-
         // Execute tools — wrapped to prevent orphaned tool_calls in context
         const toolResults: Array<{ toolCallId: string; name: string; result: string; isError?: boolean }> = [];
 
@@ -400,7 +379,7 @@ export class AgentLoop {
           }
           this.context.addToolResults(toolResults);
           // Clear plan snapshot captures — they're only valid for this turn
-          bm.forEachSession((session) => { session.planSnapshotNodes = null; });
+          (this.stateProvider as BrowserStateProvider).getBrowserManager().clearPlanSnapshots();
         }
 
         // Check if any tool updated the plan
