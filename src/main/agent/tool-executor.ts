@@ -11,8 +11,16 @@ export interface ToolResult {
   snapshot?: string; // Updated page snapshot after tool execution
 }
 
+export interface ToolMeta {
+  /** Tool result triggers a plan-update UI event. */
+  emitsPlanUpdate?: boolean;
+  /** Tool pauses agent for user review. */
+  emitsReviewRequired?: boolean;
+}
+
 export interface ToolHandler {
   definition: ToolDefinition;
+  meta?: ToolMeta;
   execute(
     args: Record<string, unknown>,
     onProgress?: (chunk: { type: "thinking" | "text"; content: string }) => void
@@ -92,6 +100,13 @@ export class ToolExecutor {
    */
   getToolDefinitions(): ToolDefinition[] {
     return [...this.handlers.values()].map((h) => h.definition);
+  }
+
+  /**
+   * Get tool metadata for a registered tool (e.g., emitsPlanUpdate, emitsReviewRequired).
+   */
+  getToolMeta(name: string): ToolMeta | undefined {
+    return this.handlers.get(name)?.meta;
   }
 
   /**

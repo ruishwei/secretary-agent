@@ -5,6 +5,8 @@ import type { StateProvider, PromptSection } from "../agent/state-provider";
  * Adapts BrowserManager to the StateProvider interface for use by the generic AgentLoop.
  */
 export class BrowserStateProvider implements StateProvider {
+  readonly id = "browser";
+
   constructor(private browserManager: BrowserManager) {}
 
   getContextSections(): PromptSection[] {
