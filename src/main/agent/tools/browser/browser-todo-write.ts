@@ -10,6 +10,7 @@ export interface PlanItem {
 export function executeBrowserTodoWrite(): ToolHandler {
   return {
     definition: BROWSER_TODO_WRITE,
+    meta: { emitsPlanUpdate: true },
     async execute(args) {
       const items = args.items as PlanItem[];
       if (!items || !Array.isArray(items)) {
