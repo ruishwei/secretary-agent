@@ -228,7 +228,7 @@ export const BROWSER_GET_PAGE_STATE: ToolDefinition = {
 export const BROWSER_REQUEST_REVIEW: ToolDefinition = {
   name: "browser_request_review",
   description:
-    "Pause AI control and request user review. Required before: submitting forms, sending messages, making purchases, deleting data, or navigating to sensitive URLs.",
+    "Pause AI control and request user review. ONLY use this when the agent is making an AUTONOMOUS decision the user did NOT explicitly authorize. SKIP review when the user gave a clear instruction: if the user said \"log in to OA\" or \"submit the form\", just do it — do NOT ask again. Use only for: agent-initiated form submissions, agent-initiated message sending, agent-initiated purchases, agent-initiated deletion, or agent-initiated navigation to sensitive URLs the user didn't request.",
   input_schema: {
     type: "object",
     properties: {

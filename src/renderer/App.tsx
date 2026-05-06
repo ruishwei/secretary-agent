@@ -31,10 +31,10 @@ export default function App() {
     }
   }, [updateSettings]);
 
-  // Hide native WebContentsView when settings modal is open (native views overlay CSS)
+  // Hide native WebContentsView when settings or review dialog is open (native views overlay DOM)
   useEffect(() => {
-    window.electronAPI?.setBrowserVisible(!settingsOpen);
-  }, [settingsOpen]);
+    window.electronAPI?.setBrowserVisible(!settingsOpen && !reviewRequest);
+  }, [settingsOpen, reviewRequest]);
 
   return (
     <div className="flex h-screen overflow-hidden">
