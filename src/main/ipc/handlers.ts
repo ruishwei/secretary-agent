@@ -6,32 +6,51 @@ import type { AppSettings, AgentEvent, BrowserState, RecordingState } from "../.
 import { AgentLoop } from "../agent/agent-loop";
 import { ToolExecutor } from "../agent/tool-executor";
 import { BrowserManager } from "../browser/browser-manager";
-import { BrowserStateProvider } from "../browser/browser-state-provider";
-import { registerBrowserTools } from "../agent/tools/browser/register-browser-tools";
+import { PluginRegistry } from "../core/plugin-registry";
+import { createBrowserPlugin, type BrowserPluginExports } from "../../plugins/browser/main/index";
 import { registerSkillTools } from "../agent/tools/skills/register-skill-tools";
 import { registerMemoryTools } from "../agent/tools/memory/register-memory-tools";
+import { registerTaskTools } from "../agent/tools/tasks/register-task-tools";
 import { SkillManager } from "../skills/skill-manager";
 import { SkillHubClient } from "../skills/skill-hub-client";
 import { MemoryStore } from "../memory/memory-store";
 import { PasswordStore } from "../password-manager/password-store";
+import { ConsciousnessStore } from "../consciousness/consciousness-store";
+import { TaskScheduler } from "../task/task-scheduler";
+import { SelfEvolution } from "../learning/self-evolution";
+import { PrivacyGuard } from "../security/privacy-guard";
 import { getConfig } from "../utils/config";
 import { loadSettings, saveSettings } from "../utils/settings-store";
+
+// Tool imports
+import { executeReflect } from "../agent/tools/learning/reflect";
 
 const logger = new Logger("IPC");
 
 let settings: AppSettings = loadSettings();
 let agentRunning = false;
 let agentLoop: AgentLoop | null = null;
+let taskScheduler = new TaskScheduler();
+let selfEvolution = new SelfEvolution();
+let privacyGuard = new PrivacyGuard();
 
 import { OperationRecorder } from "../browser/operation-recorder";
 
-// Module-level browser state (shared between IPC handlers and tools)
+// Module-level state (sourced from plugins, shared between IPC handlers and tools)
+let pluginRegistry: PluginRegistry;
 let browserManager: BrowserManager;
-let browserStateProvider: BrowserStateProvider;
 let operationRecorder: OperationRecorder;
+let consciousnessStore: ConsciousnessStore;
 let passwordStore: PasswordStore;
 let _skillManager: SkillManager | null = null;
 let _memoryStore: MemoryStore | null = null;
+
+function ensureConsciousnessStore(): ConsciousnessStore {
+  if (!consciousnessStore) {
+    consciousnessStore = new ConsciousnessStore(getConfig().userDataPath);
+  }
+  return consciousnessStore;
+}
 
 function ensureSkillManager(): SkillManager {
   if (!_skillManager) {
@@ -74,10 +93,90 @@ function getMainWin(): BrowserWindow | null {
   return windows.length > 0 ? windows[0] : null;
 }
 
-function sendAgentEvent(win: BrowserWindow | null, event: AgentEvent) {
+function sendAgentEvent(win: BrowserWindow | null, event: AgentEvent & { taskId?: string }) {
   if (win && !win.isDestroyed()) {
     win.webContents.send(IPC.AGENT_EVENT, event);
   }
+}
+
+let currentTaskId = "";
+
+function pushConsciousnessEvent(event: AgentEvent) {
+  const store = ensureConsciousnessStore();
+  store.recordEvent(currentTaskId, event);
+  const win = getMainWin();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.CONSCIOUSNESS_EVENT, { taskId: currentTaskId, ...event });
+  }
+}
+
+function pushTaskSnapshot() {
+  const win = getMainWin();
+  if (win && !win.isDestroyed()) {
+    win.webContents.send(IPC.TASK_SNAPSHOT_CHANGED, taskScheduler.getSnapshot());
+  }
+}
+
+function startTaskLoop(taskId: string, loop: AgentLoop, userMessage: string, attachments?: unknown[]) {
+  const win = getMainWin();
+  currentTaskId = taskId;
+  agentRunning = true;
+
+  const images = attachments
+    ?.filter((a: any) => a.dataUrl?.startsWith("data:image/"))
+    .map((a: any) => a.dataUrl);
+
+  // Enrich the message with context about recently completed tasks
+  const taskContext = taskScheduler.buildTaskContext();
+  const enrichedMessage = taskContext
+    ? `${userMessage}\n\n[System: Task context]\n${taskContext}`
+    : userMessage;
+
+  (async () => {
+    try {
+      for await (const event of loop.run(enrichedMessage, images)) {
+        sendAgentEvent(win, { ...event, taskId });
+        pushConsciousnessEvent({ ...event, taskId } as any);
+
+        if (event.type === "done") {
+          agentRunning = false;
+          taskScheduler.completeTask(taskId);
+          taskScheduler.setSummary(taskId, event.summary);
+        } else if (event.type === "error" && !event.recoverable) {
+          agentRunning = false;
+          taskScheduler.cancelTask(taskId);
+        }
+      }
+    } catch (err: any) {
+      logger.error(`Agent loop error for task ${taskId}: ${err.message}`);
+      sendAgentEvent(win, {
+        type: "error",
+        message: `Agent error: ${err.message}`,
+        recoverable: false,
+        taskId,
+      });
+      pushConsciousnessEvent({ type: "error", message: err.message, taskId } as any);
+      agentRunning = false;
+      taskScheduler.cancelTask(taskId);
+    } finally {
+      ensureConsciousnessStore().saveToDisk(taskId);
+      pushTaskSnapshot();
+
+      // Notify self-evolution of task completion
+      selfEvolution.onTaskCompleted();
+      selfEvolution.autoReflect().catch((err) => {
+        logger.error(`Auto-reflection error: ${err.message}`);
+      });
+
+      // Auto-start next pending task
+      const nextTask = taskScheduler.getNextTask();
+      if (nextTask) {
+        taskScheduler.activate(nextTask.id);
+        startTaskLoop(nextTask.id, loop, nextTask.title);
+        pushTaskSnapshot();
+      }
+    }
+  })();
 }
 
 function getRendererSender(): (channel: string, data: unknown) => void {
@@ -105,42 +204,48 @@ function pushRecordingState(state: RecordingState) {
   }
 }
 
+/** Initialize the plugin system: register and enable all plugins. */
+async function initPluginSystem(): Promise<void> {
+  if (pluginRegistry) return;
+
+  pluginRegistry = new PluginRegistry();
+
+  // Register browser plugin
+  await pluginRegistry.register(createBrowserPlugin(), {
+    getLLMClient() {
+      if (!agentLoop) throw new Error("Agent loop not initialized");
+      return agentLoop.getLLMClient();
+    },
+    sendToRenderer(channel, data) {
+      getRendererSender()(channel, data);
+    },
+    getSettings() {
+      return settings;
+    },
+    getDataPath() {
+      return getConfig().userDataPath;
+    },
+  });
+
+  // Enable browser plugin (initializes BrowserManager, creates default tab)
+  await pluginRegistry.enable("browser");
+
+  // Extract browser services from plugin exports
+  const bp = pluginRegistry.getPlugin("browser");
+  const exports = bp?.exports as BrowserPluginExports | undefined;
+  if (exports) {
+    browserManager = exports.browserManager;
+  }
+}
+
 async function initAgentLoop(): Promise<AgentLoop> {
   if (agentLoop) return agentLoop;
 
-  // Create browser infrastructure
-  if (!browserManager) {
-    browserManager = new BrowserManager();
-
-    // Wire main window
-    const win = getMainWin();
-    if (win) {
-      browserManager.setMainWindow(win);
-    }
-
-    // Wire state push callback so tab navigation events reach the renderer
-    browserManager.setStatePushCallback(pushTabState);
-
-    // Wire popup callback: create a new tab + notify renderer
-    browserManager.setPopupCallback((tabId, url, sourceTabId) => {
-      browserManager.createTab(tabId, url);
-      browserManager.setActiveTab(tabId);
-      const win = getMainWin();
-      if (win) {
-        win.webContents.send(IPC.BROWSER_POPUP_OPEN, { tabId, url, sourceTabId });
-        win.webContents.send(IPC.TAB_LIST_CHANGED, {
-          tabs: browserManager.getAllTabs(),
-          activeTabId: tabId,
-        });
-      }
-    });
-  }
-  browserStateProvider = new BrowserStateProvider(browserManager);
+  // Initialize plugin system (registers + enables browser plugin)
+  await initPluginSystem();
 
   // Create tool executor (empty — tools registered after LLM client exists)
   const toolExecutor = new ToolExecutor();
-
-  // Wire renderer callback on tool executor
   toolExecutor.setRendererCallback(getRendererSender());
 
   // Create AgentLoop (creates LLMClient internally)
@@ -148,22 +253,19 @@ async function initAgentLoop(): Promise<AgentLoop> {
   if (!activeConfig) {
     throw new Error("No active LLM configuration. Please configure a model in Settings.");
   }
-  agentLoop = new AgentLoop(
-    { llm: activeConfig },
-    browserStateProvider,
-    toolExecutor,
-  );
 
-  // Ensure at least one tab exists for the agent
-  if (browserManager.tabCount === 0) {
-    browserManager.createTab("tab-initial");
+  // Use the primary state provider from the plugin registry
+  const stateProviders = pluginRegistry.getStateProviders();
+  if (stateProviders.length === 0) {
+    throw new Error("No state provider available. Ensure the browser plugin is enabled.");
   }
+  agentLoop = new AgentLoop({ llm: activeConfig }, stateProviders[0], toolExecutor);
 
-  // Now register browser tools with the LLM client from AgentLoop
-  registerBrowserTools(toolExecutor, {
-    browser: browserManager,
+  // Register all plugin tools through the registry
+  pluginRegistry.registerAllTools(toolExecutor, {
     llmClient: agentLoop.getLLMClient(),
     sendToRenderer: getRendererSender(),
+    getSettings: () => settings,
   });
 
   // Initialize skill and memory systems (shared singletons, also used by settings IPC)
@@ -173,9 +275,17 @@ async function initAgentLoop(): Promise<AgentLoop> {
 
   registerSkillTools(toolExecutor, skillManager);
   registerMemoryTools(toolExecutor, memoryStore);
+  registerTaskTools(toolExecutor, taskScheduler);
+
+  // Initialize self-evolution and register reflect tool
+  selfEvolution.setLLMClient(agentLoop.getLLMClient());
+  selfEvolution.setSkillManager(skillManager);
+  selfEvolution.setMemoryStore(memoryStore);
+  toolExecutor.register(executeReflect(selfEvolution, memoryStore, skillManager));
 
   agentLoop.setSkillManager(skillManager);
   agentLoop.setMemoryStore(memoryStore);
+  agentLoop.setPrivacyGuard(privacyGuard);
 
   // Initialize operation recorder (decoupled — skill save + LLM synthesis via callbacks)
   if (!operationRecorder) {
@@ -183,7 +293,6 @@ async function initAgentLoop(): Promise<AgentLoop> {
     operationRecorder.setSkillSaveCallback(async (name, category, content) => {
       await skillManager.create(category, name, content);
     });
-    // Wire LLM synthesis: use the agent's LLM client to convert raw actions into a polished skill
     operationRecorder.setLLMSynthesisCallback(async (prompt: string) => {
       const llmClient = agentLoop!.getLLMClient();
       const response = await llmClient.simpleQuery(
@@ -194,34 +303,8 @@ async function initAgentLoop(): Promise<AgentLoop> {
     });
   }
 
-  await agentLoop.initialize();
-  logger.info("Agent loop initialized with skills, memory, and recorder");
+  logger.info("Agent loop created via plugin system");
   return agentLoop;
-}
-
-/** Initialize browser and create default tab (called on first message or explicitly). */
-async function initBrowser(): Promise<void> {
-  if (!browserManager) {
-    browserManager = new BrowserManager();
-    const win = getMainWin();
-    if (win) {
-      browserManager.setMainWindow(win);
-    }
-    browserManager.setStatePushCallback(pushTabState);
-    browserManager.setPopupCallback((tabId, url, sourceTabId) => {
-      browserManager.createTab(tabId, url);
-      browserManager.setActiveTab(tabId);
-      const win = getMainWin();
-      if (win) {
-        win.webContents.send(IPC.BROWSER_POPUP_OPEN, { tabId, url, sourceTabId });
-        win.webContents.send(IPC.TAB_LIST_CHANGED, {
-          tabs: browserManager.getAllTabs(),
-          activeTabId: tabId,
-        });
-      }
-    });
-    await browserManager.initialize();
-  }
 }
 
 export function registerIpcHandlers(): void {
@@ -231,18 +314,8 @@ export function registerIpcHandlers(): void {
     const win = getMainWin();
     logger.info(`Message received: "${req.text.substring(0, 100)}"`);
 
-    if (agentRunning) {
-      return {
-        messageId: `msg-${Date.now()}`,
-        status: "rejected" as const,
-        reason: "Agent is already processing a request.",
-      };
-    }
-
     try {
-      // Ensure browser is initialized before first agent message
-      await initBrowser();
-
+      await initPluginSystem();
       const loop = await initAgentLoop();
 
       const activeCfg = getActiveLlmConfig();
@@ -259,40 +332,29 @@ export function registerIpcHandlers(): void {
         };
       }
 
-      agentRunning = true;
+      // Create a task and decide: start now or queue
+      const task = taskScheduler.createTask({
+        title: req.text.slice(0, 80),
+        priority: 5,
+      });
 
-      // Extract image data URLs from attachments
-      const images = req.attachments
-        ?.filter((a: any) => a.dataUrl?.startsWith("data:image/"))
-        .map((a: any) => a.dataUrl);
+      const activeTask = taskScheduler.getActiveTask();
+      const shouldStartNow = !activeTask;
 
-      // Run agent loop asynchronously, streaming events to renderer
-      (async () => {
-        try {
-          for await (const event of loop.run(req.text, images)) {
-            sendAgentEvent(win, event);
+      if (shouldStartNow) {
+        taskScheduler.activate(task.id);
+        startTaskLoop(task.id, loop, req.text, req.attachments);
+      }
+      // else: queued as pending; will auto-start when current task completes
 
-            if (event.type === "done" || event.type === "error") {
-              agentRunning = false;
-            }
-          }
-        } catch (err: any) {
-          logger.error(`Agent loop error: ${err.message}`);
-          sendAgentEvent(win, {
-            type: "error",
-            message: `Agent error: ${err.message}`,
-            recoverable: false,
-          });
-          agentRunning = false;
-        }
-      })();
+      pushTaskSnapshot();
 
       return {
-        messageId: `msg-${Date.now()}`,
+        messageId: task.id,
         status: "queued" as const,
       };
     } catch (err: any) {
-      logger.error(`Failed to start agent: ${err.message}`);
+      logger.error(`Failed to handle message: ${err.message}`);
       return {
         messageId: `msg-${Date.now()}`,
         status: "rejected" as const,
@@ -303,17 +365,22 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.ABORT_AGENT, async () => {
     logger.info("Agent abort requested");
+    const activeTaskId = taskScheduler.getActiveTaskId();
+    if (activeTaskId) {
+      taskScheduler.cancelTask(activeTaskId);
+    }
     if (agentLoop) {
       agentLoop.abort();
     }
     agentRunning = false;
+    pushTaskSnapshot();
   });
 
   // ===== Browser Navigation =====
 
   ipcMain.handle(IPC.BROWSER_NAVIGATE_TO, async (_event, url: string, tabId?: string) => {
     logger.info(`Navigate to: ${url}${tabId ? ` (tab: ${tabId})` : ""}`);
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
     if (session) {
       session.loadURL(url);
@@ -321,19 +388,19 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC.BROWSER_GO_BACK, async (_event, tabId?: string) => {
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
     session?.goBack();
   });
 
   ipcMain.handle(IPC.BROWSER_GO_FORWARD, async (_event, tabId?: string) => {
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
     session?.goForward();
   });
 
   ipcMain.handle(IPC.BROWSER_REFRESH, async (_event, tabId?: string) => {
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
     if (session) {
       if (session.isLoading) {
@@ -345,18 +412,18 @@ export function registerIpcHandlers(): void {
   });
 
   ipcMain.handle(IPC.BROWSER_STOP, async (_event, tabId?: string) => {
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     const session = tabId ? browserManager.getSession(tabId) : browserManager.getActiveSession();
     session?.stop();
   });
 
   ipcMain.handle(IPC.BROWSER_LAYOUT, async (_event, bounds: { x: number; y: number; width: number; height: number }) => {
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     browserManager.setLayoutBounds(bounds);
   });
 
   ipcMain.handle(IPC.BROWSER_SET_VISIBLE, async (_event, visible: boolean) => {
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
     browserManager.setVisible(visible);
   });
 
@@ -365,7 +432,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle(IPC.TAB_CREATE, async (_event, url?: string) => {
     logger.info(`Tab create requested${url ? ` for ${url}` : ""}`);
     if (!browserManager) {
-      await initBrowser();
+      await initPluginSystem();
     }
     const session = browserManager.createTab(undefined, url);
     // Push tab list update to renderer
@@ -432,10 +499,11 @@ export function registerIpcHandlers(): void {
         const approved = response === "approved" || response === "modified";
         agentRunning = true;
         const win = getMainWin();
+        const reviewTaskId = currentTaskId;
         (async () => {
           try {
             for await (const event of agentLoop!.resumeAfterReview(reviewId, approved, modifications)) {
-              sendAgentEvent(win, event);
+              sendAgentEvent(win, { ...event, taskId: reviewTaskId });
               if (event.type === "done" || event.type === "error") {
                 agentRunning = false;
               }
@@ -446,6 +514,7 @@ export function registerIpcHandlers(): void {
               type: "error",
               message: `Review resume error: ${err.message}`,
               recoverable: false,
+              taskId: reviewTaskId,
             });
             agentRunning = false;
           }
@@ -497,7 +566,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.RECORDING_START, async () => {
     logger.info("Recording start requested");
-    if (!browserManager) await initBrowser();
+    if (!browserManager) await initPluginSystem();
 
     const session = browserManager.getActiveSession();
     if (!session) {
@@ -600,9 +669,9 @@ export function registerIpcHandlers(): void {
     if (target === "memory") {
       const current = store.getMemorySnapshot();
       if (current) {
-        return store.replace("memory", current, content);
+        return store.replace("deep", current, content);
       }
-      return store.add("memory", content);
+      return store.add("deep", content);
     } else {
       const current = store.getUserProfile();
       if (current) {
@@ -691,6 +760,145 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(IPC.WORKSPACE_OPEN_FOLDER, async (_event, folderPath: string) => {
     await shell.openPath(folderPath);
+  });
+
+  // ===== Consciousness Stream =====
+
+  ipcMain.handle(IPC.CONSCIOUSNESS_GET_STREAM, async (_event, taskId: string) => {
+    const store = ensureConsciousnessStore();
+    // Try in-memory first, then disk
+    const active = store.getStream(taskId);
+    if (active.length > 0) return active;
+    return store.loadFromDisk(taskId);
+  });
+
+  ipcMain.handle(IPC.CONSCIOUSNESS_GET_ACTIVE, async () => {
+    return ensureConsciousnessStore().getActiveTaskIds();
+  });
+
+  ipcMain.handle(IPC.CONSCIOUSNESS_GET_RECENT, async (_event, limit?: number) => {
+    return ensureConsciousnessStore().getRecentEntries(limit || 50);
+  });
+
+  ipcMain.handle(IPC.CONSCIOUSNESS_DELETE_STREAM, async (_event, taskId: string) => {
+    ensureConsciousnessStore().deleteStream(taskId);
+  });
+
+  // ===== Task Management =====
+
+  ipcMain.handle(IPC.TASK_LIST, async () => {
+    return taskScheduler.getAllTasks();
+  });
+
+  ipcMain.handle(IPC.TASK_GET_SNAPSHOT, async () => {
+    return taskScheduler.getSnapshot();
+  });
+
+  ipcMain.handle(IPC.TASK_CREATE, async (_event, input: { title: string; priority?: number; tabId?: string }) => {
+    const task = taskScheduler.createTask(input);
+    pushTaskSnapshot();
+    return task;
+  });
+
+  ipcMain.handle(IPC.TASK_CANCEL, async (_event, taskId: string) => {
+    const activeId = taskScheduler.getActiveTaskId();
+    if (taskId === activeId && agentLoop) {
+      agentLoop.abort();
+      agentRunning = false;
+    }
+    const ok = taskScheduler.cancelTask(taskId);
+    pushTaskSnapshot();
+    return ok;
+  });
+
+  ipcMain.handle(IPC.TASK_SWITCH, async (_event, taskId: string) => {
+    const task = taskScheduler.getTask(taskId);
+    if (!task || task.status === "completed" || task.status === "cancelled") {
+      return false;
+    }
+
+    // Abort current task if running
+    const activeId = taskScheduler.getActiveTaskId();
+    if (activeId && activeId !== taskId && agentLoop) {
+      agentLoop.abort();
+      agentRunning = false;
+      // Mark previous task as blocked (was interrupted)
+      taskScheduler.blockTask(activeId);
+    }
+
+    taskScheduler.activate(taskId);
+    pushTaskSnapshot();
+
+    // Start the task loop for the newly activated task
+    if (task.status === "active") {
+      const loop = agentLoop;
+      if (loop) {
+        startTaskLoop(taskId, loop, task.title);
+      }
+    }
+
+    return true;
+  });
+
+  ipcMain.handle(IPC.TASK_SET_PRIORITY, async (_event, taskId: string, priority: number) => {
+    const ok = taskScheduler.setPriority(taskId, priority);
+    if (ok) pushTaskSnapshot();
+    return ok;
+  });
+
+  // ===== Window / Floating Mode =====
+
+  let floatingMode = false;
+  let savedBounds: { x: number; y: number; width: number; height: number } | null = null;
+
+  ipcMain.handle(IPC.FLOATING_TOGGLE, async () => {
+    const win = getMainWin();
+    if (!win) return false;
+
+    floatingMode = !floatingMode;
+
+    if (floatingMode) {
+      savedBounds = win.getBounds();
+      const { screen } = require("electron");
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const { width: screenWidth } = primaryDisplay.workAreaSize;
+
+      // Position as a small floating bar at top-center of screen
+      const floatW = 420;
+      const floatH = 56;
+      win.setBounds({
+        x: Math.round((screenWidth - floatW) / 2),
+        y: 4,
+        width: floatW,
+        height: floatH,
+      });
+      win.setAlwaysOnTop(true, "floating");
+      win.setResizable(false);
+      win.setMinimizable(false);
+      win.setSkipTaskbar(false);
+      // Hide browser — agent uses background browser or system browser
+      if (browserManager) {
+        browserManager.setVisible(false);
+      }
+    } else {
+      win.setAlwaysOnTop(false);
+      win.setResizable(true);
+      win.setMinimizable(true);
+      if (savedBounds) {
+        win.setBounds(savedBounds);
+        savedBounds = null;
+      } else {
+        win.setBounds({ x: 100, y: 100, width: 1400, height: 900 });
+      }
+      if (browserManager) {
+        browserManager.setVisible(true);
+      }
+    }
+
+    // Notify renderer
+    win.webContents.send(IPC.FLOATING_STATE_CHANGED, floatingMode);
+
+    return floatingMode;
   });
 
   // ===== System =====

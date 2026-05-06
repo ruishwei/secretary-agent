@@ -1,4 +1,4 @@
-export const APP_NAME = "Browser Secretary Agent";
+export const APP_NAME = "Corona";
 export const APP_VERSION = "0.1.0";
 
 export const MEMORY_MAX_CHARS = 2200;

@@ -10,18 +10,8 @@ export function BrowserView() {
   const isStreaming = useStore((s) => s.isStreaming);
   const updateTab = useStore((s) => s.updateTab);
   const containerRef = useRef<HTMLDivElement>(null);
-  const initializedRef = useRef(false);
   const [loadState, setLoadState] = useState<LoadState>("idle");
 
-  // One-time initialization — request browser infrastructure + default tab.
-  useEffect(() => {
-    if (initializedRef.current) return;
-    initializedRef.current = true;
-
-    if (window.electronAPI?.createTab) {
-      window.electronAPI.createTab();
-    }
-  }, []);
 
   // Measure container bounds and push to main process for WebContentsView positioning
   useEffect(() => {

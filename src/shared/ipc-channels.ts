@@ -73,6 +73,26 @@ export const IPC = {
   WORKSPACE_GET_PATHS: "workspace:get-paths",
   WORKSPACE_OPEN_FOLDER: "workspace:open-folder",
 
+  // Consciousness Stream
+  CONSCIOUSNESS_EVENT: "consciousness:event",
+  CONSCIOUSNESS_GET_STREAM: "consciousness:get-stream",
+  CONSCIOUSNESS_GET_ACTIVE: "consciousness:get-active",
+  CONSCIOUSNESS_GET_RECENT: "consciousness:get-recent",
+  CONSCIOUSNESS_DELETE_STREAM: "consciousness:delete-stream",
+
+  // Task Management
+  TASK_LIST: "task:list",
+  TASK_CREATE: "task:create",
+  TASK_CANCEL: "task:cancel",
+  TASK_SWITCH: "task:switch",
+  TASK_SET_PRIORITY: "task:set-priority",
+  TASK_GET_SNAPSHOT: "task:get-snapshot",
+  TASK_SNAPSHOT_CHANGED: "task:snapshot-changed",
+
+  // Window
+  FLOATING_TOGGLE: "window:floating-toggle",
+  FLOATING_STATE_CHANGED: "window:floating-state-changed",
+
   // System
   GET_APP_VERSION: "system:get-version",
 } as const;

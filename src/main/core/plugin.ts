@@ -44,13 +44,13 @@ export interface PluginIPCChannel {
 export interface PluginToolContext {
   llmClient: LLMClient;
   sendToRenderer: (channel: string, data: unknown) => void;
-  getSettings(): Record<string, unknown>;
+  getSettings(): unknown;
 }
 
 export interface PluginContext {
   getLLMClient(): LLMClient;
   sendToRenderer(channel: string, data: unknown): void;
-  getSettings(): Record<string, unknown>;
+  getSettings(): unknown;
   getDataPath(): string;
 }
 
@@ -69,6 +69,12 @@ export interface Plugin {
     panels?: UIPanelContribution[];
     settingsSections?: SettingsSectionContribution[];
   };
+
+  /**
+   * Opaque plugin-specific exports that the host can access via typed getPlugin<T>().
+   * Plugins use this to expose internal services (e.g., BrowserManager) for IPC handlers.
+   */
+  exports?: unknown;
 
   // Lifecycle
   init(ctx: PluginContext): Promise<void>;

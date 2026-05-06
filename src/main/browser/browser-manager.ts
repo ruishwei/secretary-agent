@@ -580,7 +580,7 @@ export class TabSession {
 
 export class BrowserManager {
   private sessions = new Map<string, TabSession>();
-  private activeTabId: string | null = null;
+  private _activeTabId: string | null = null;
   private mainWindow: BrowserWindow | null = null;
   private layoutBounds = { x: 0, y: 80, width: 800, height: 600 };
   private visible = true;
@@ -588,6 +588,10 @@ export class BrowserManager {
   private popupCallback?: (tabId: string, url: string, sourceTabId: string) => void;
   private _screenshotQuality = 80;
   private tabActivationHistory: string[] = [];
+
+  get activeTabId(): string | null {
+    return this._activeTabId;
+  }
 
   setScreenshotQuality(quality: number): void {
     this._screenshotQuality = Math.max(10, Math.min(100, quality));
@@ -632,7 +636,7 @@ export class BrowserManager {
     for (const [tabId, session] of this.sessions) {
       if (!this.visible) {
         session.view.setBounds(offscreen);
-      } else if (tabId === this.activeTabId) {
+      } else if (tabId === this._activeTabId) {
         session.view.setBounds(this.layoutBounds);
       } else {
         session.view.setBounds(offscreen);
@@ -673,15 +677,15 @@ export class BrowserManager {
     // Add to window
     if (this.mainWindow) {
       this.mainWindow.contentView.addChildView(view);
-      if (id === this.activeTabId || !this.activeTabId) {
+      if (id === this._activeTabId || !this._activeTabId) {
         view.setBounds(this.layoutBounds);
       } else {
         view.setBounds({ x: -9999, y: -9999, width: 1, height: 1 });
       }
     }
 
-    if (!this.activeTabId) {
-      this.activeTabId = id;
+    if (!this._activeTabId) {
+      this._activeTabId = id;
     }
 
     // Navigate to initial URL if provided
@@ -712,20 +716,20 @@ export class BrowserManager {
     // Clean closed tab from history
     this.tabActivationHistory = this.tabActivationHistory.filter((id) => id !== tabId);
 
-    if (this.activeTabId === tabId) {
+    if (this._activeTabId === tabId) {
       // Restore the most recently active tab that still exists
       let restored = false;
       while (this.tabActivationHistory.length > 0) {
         const prev = this.tabActivationHistory.pop()!;
         if (this.sessions.has(prev)) {
-          this.activeTabId = prev;
+          this._activeTabId = prev;
           restored = true;
           break;
         }
       }
       if (!restored) {
         const remaining = [...this.sessions.keys()];
-        this.activeTabId = remaining[0];
+        this._activeTabId = remaining[0];
       }
       this.repositionViews();
     }
@@ -734,17 +738,17 @@ export class BrowserManager {
   }
 
   setActiveTab(tabId: string): void {
-    if (this.sessions.has(tabId) && this.activeTabId !== tabId) {
-      if (this.activeTabId) {
-        this.tabActivationHistory.push(this.activeTabId);
+    if (this.sessions.has(tabId) && this._activeTabId !== tabId) {
+      if (this._activeTabId) {
+        this.tabActivationHistory.push(this._activeTabId);
       }
-      this.activeTabId = tabId;
+      this._activeTabId = tabId;
       this.repositionViews();
     }
   }
 
   getActiveSession(): TabSession | null {
-    return this.activeTabId ? this.sessions.get(this.activeTabId) ?? null : null;
+    return this._activeTabId ? this.sessions.get(this._activeTabId) ?? null : null;
   }
 
   getSession(tabId: string): TabSession | undefined {
@@ -766,7 +770,7 @@ export class BrowserManager {
         url: session.url,
         title: session.title,
         favicon: session.favicon || undefined,
-        isActive: tabId === this.activeTabId,
+        isActive: tabId === this._activeTabId,
       });
     }
     return result;
@@ -905,7 +909,7 @@ export class BrowserManager {
       session.cleanup();
     }
     this.sessions.clear();
-    this.activeTabId = null;
+    this._activeTabId = null;
   }
 
   /**

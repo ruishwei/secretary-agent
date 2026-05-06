@@ -325,7 +325,7 @@ export const SKILL_LIST: ToolDefinition = {
 export const SKILL_VIEW: ToolDefinition = {
   name: "skill_view",
   description:
-    "Load a skill's full content (SKILL.md). Use when a skill matches the current task. Progressive disclosure: call without file_path first to get the main instructions, then with file_path for specific references.",
+    "Load a skill's full content (SKILL.md). Use when a skill matches the current task. Progressive disclosure: call without file_path first to get the main instructions, then with file_path for specific subdirectory files (e.g., 'references/api-guide.md', 'scripts/validate.py', 'assets/template.md').",
   input_schema: {
     type: "object",
     properties: {
@@ -335,7 +335,7 @@ export const SKILL_VIEW: ToolDefinition = {
       },
       file_path: {
         type: "string",
-        description: "Optional: specific file within the skill directory to load.",
+        description: "Optional: relative path within the skill directory (e.g., 'scripts/validate.py', 'references/api-guide.md'). Standard subdirectories: scripts/, references/, assets/.",
       },
     },
     required: ["name"],
@@ -345,21 +345,21 @@ export const SKILL_VIEW: ToolDefinition = {
 export const SKILL_CREATE: ToolDefinition = {
   name: "skill_create",
   description:
-    "Create a new skill from a completed task. Use after finishing a complex task (5+ tool calls), solving a tricky error, or discovering a non-obvious workflow. The skill will be available in future sessions.",
+    "Create a new skill following the Claude Skills specification. The skill directory will contain SKILL.md with optional scripts/, references/, and assets/ subdirectories. Category is specified in the YAML frontmatter.",
   input_schema: {
     type: "object",
     properties: {
       name: {
         type: "string",
-        description: "Skill name: lowercase letters, digits, dots, underscores, dashes (max 64 chars).",
+        description: "Skill name: lowercase letters, digits, dots, underscores, dashes (max 64 chars). Example: 'form-filling'.",
       },
       category: {
         type: "string",
-        description: "Category folder name (e.g., 'browser-tasks', 'data-extraction').",
+        description: "Logical category for grouping (e.g., 'browser-tasks', 'data-processing'). Also embed in frontmatter as 'category: ...'.",
       },
       content: {
         type: "string",
-        description: "Full SKILL.md content with YAML frontmatter and markdown body.",
+        description: "Full SKILL.md content with YAML frontmatter (name, category, description, version) and markdown body. Standard subdirectories scripts/, references/, assets/ will be created automatically.",
       },
     },
     required: ["name", "category", "content"],
@@ -410,7 +410,7 @@ export const SKILL_DELETE: ToolDefinition = {
 export const MEMORY_SEARCH: ToolDefinition = {
   name: "memory_search",
   description:
-    "Search across all memory files (MEMORY.md, USER.md, daily files, session transcripts) using hybrid search (semantic + full-text). Use before answering questions about past work, user preferences, or prior decisions.",
+    "Search across the memory hierarchy: deep (persistent core knowledge), shallow (recent days, auto-forgets), user profile, and past session transcripts. Use before answering questions about past work, user preferences, or prior decisions.",
   input_schema: {
     type: "object",
     properties: {
@@ -425,6 +425,11 @@ export const MEMORY_SEARCH: ToolDefinition = {
       minScore: {
         type: "number",
         description: "Minimum relevance score (0-1). Default: 0.3.",
+      },
+      layer: {
+        type: "string",
+        enum: ["deep", "shallow", "user", "session"],
+        description: "Optional: filter by memory layer.",
       },
     },
     required: ["query"],
@@ -457,18 +462,18 @@ export const MEMORY_GET: ToolDefinition = {
 export const MEMORY_ADD: ToolDefinition = {
   name: "memory_add",
   description:
-    "Add a durable memory entry to MEMORY.md (agent notes) or USER.md (user profile). Prioritize what reduces future user steering — the best memory prevents the user from correcting you again.",
+    "Add a memory entry to the persistent knowledge base. Choose the right layer: 'shallow' (default, auto-forgets after 7 days), 'deep' (core identity, always loaded, never expires), or 'user' (user profile/preferences). The best memory prevents the user from correcting you again.",
   input_schema: {
     type: "object",
     properties: {
       target: {
         type: "string",
-        enum: ["memory", "user"],
-        description: "Which file to write to.",
+        enum: ["shallow", "deep", "user"],
+        description: "Memory layer: 'shallow' (daily, auto-forgets), 'deep' (persistent, always loaded), 'user' (profile/preferences).",
       },
       entry: {
         type: "string",
-        description: "The memory entry to append. Will be separated with a '§' delimiter.",
+        description: "The memory entry to store. Automatic dedup prevents redundant entries.",
       },
     },
     required: ["target", "entry"],
@@ -477,13 +482,13 @@ export const MEMORY_ADD: ToolDefinition = {
 
 export const MEMORY_REPLACE: ToolDefinition = {
   name: "memory_replace",
-  description: "Find and replace a specific memory entry by substring match.",
+  description: "Find and replace a specific memory entry by substring match. Only applies to deep or user layers (shallow entries should be promoted instead).",
   input_schema: {
     type: "object",
     properties: {
       target: {
         type: "string",
-        enum: ["memory", "user"],
+        enum: ["deep", "user"],
       },
       old: {
         type: "string",
@@ -633,8 +638,76 @@ export const MEMORY_TOOLS: ToolDefinition[] = [
   SESSION_SEARCH,
 ];
 
+export const REFLECT: ToolDefinition = {
+  name: "reflect",
+  description:
+    "Trigger self-reflection and self-evolution. The agent analyzes recent activity patterns, identifies what worked and what failed, and proposes concrete improvements — new skills to create, existing skills to update, memories to add or remove. Use this after completing significant tasks, when the user asks you to learn from experience, or when you notice repeated failures.",
+  input_schema: {
+    type: "object",
+    properties: {
+      focus: {
+        type: "string",
+        description: "Optional focus area for reflection (e.g., 'browser automation', 'form filling', 'data extraction'). If omitted, reflects on all recent activity.",
+      },
+      apply: {
+        type: "boolean",
+        description: "Whether to automatically apply the recommended improvements (create/update skills, update memory). Default: true.",
+      },
+    },
+  },
+};
+
+export const TASK_CANCEL: ToolDefinition = {
+  name: "task_cancel",
+  description:
+    "Cancel a running or pending task. Use when a new task supersedes a previous one, or when the user's request makes an existing task obsolete.",
+  input_schema: {
+    type: "object",
+    properties: {
+      taskId: {
+        type: "string",
+        description: "The ID of the task to cancel.",
+      },
+      reason: {
+        type: "string",
+        description: "Brief reason for cancellation (e.g., 'superseded by new request', 'user changed mind').",
+      },
+    },
+    required: ["taskId"],
+  },
+};
+
+export const TASK_SET_RELATION: ToolDefinition = {
+  name: "task_set_relation",
+  description:
+    "Declare a relationship between tasks. Use to indicate that a task supersedes, depends on, or continues a previous task.",
+  input_schema: {
+    type: "object",
+    properties: {
+      taskId: {
+        type: "string",
+        description: "The task to set the relation on.",
+      },
+      type: {
+        type: "string",
+        enum: ["supersedes", "depends-on", "continues"],
+        description: "Relation type: 'supersedes' (replaces), 'depends-on' (needs result), 'continues' (picks up where left off).",
+      },
+      targetTaskId: {
+        type: "string",
+        description: "The task this one relates to.",
+      },
+    },
+    required: ["taskId", "type", "targetTaskId"],
+  },
+};
+
+export const TASK_LIST_TOOLS: ToolDefinition[] = [TASK_CANCEL, TASK_SET_RELATION];
+
 export const ALL_TOOLS: ToolDefinition[] = [
   ...BROWSER_TOOLS,
   ...SKILL_TOOLS,
   ...MEMORY_TOOLS,
+  ...TASK_LIST_TOOLS,
+  REFLECT,
 ];

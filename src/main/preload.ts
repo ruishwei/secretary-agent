@@ -175,6 +175,48 @@ const electronAPI = {
     openFolder: (folderPath: string): Promise<void> => ipcRenderer.invoke(IPC.WORKSPACE_OPEN_FOLDER, folderPath),
   },
 
+  // Consciousness Stream
+  onConsciousnessEvent: (callback: (data: AgentEvent & { taskId: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: AgentEvent & { taskId: string }) => callback(data);
+    ipcRenderer.on(IPC.CONSCIOUSNESS_EVENT, handler);
+    return () => ipcRenderer.removeListener(IPC.CONSCIOUSNESS_EVENT, handler);
+  },
+  getConsciousnessStream: (taskId: string): Promise<import("../shared/types").ConsciousnessEntry[]> =>
+    ipcRenderer.invoke(IPC.CONSCIOUSNESS_GET_STREAM, taskId),
+  getConsciousnessActive: (): Promise<string[]> =>
+    ipcRenderer.invoke(IPC.CONSCIOUSNESS_GET_ACTIVE),
+  getConsciousnessRecent: (limit?: number): Promise<import("../shared/types").ConsciousnessEntry[]> =>
+    ipcRenderer.invoke(IPC.CONSCIOUSNESS_GET_RECENT, limit),
+  deleteConsciousnessStream: (taskId: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.CONSCIOUSNESS_DELETE_STREAM, taskId),
+
+  // Task Management
+  onTaskSnapshotChanged: (callback: (snapshot: import("../shared/types").TaskSnapshot) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: import("../shared/types").TaskSnapshot) => callback(data);
+    ipcRenderer.on(IPC.TASK_SNAPSHOT_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.TASK_SNAPSHOT_CHANGED, handler);
+  },
+  taskList: (): Promise<import("../shared/types").Task[]> =>
+    ipcRenderer.invoke(IPC.TASK_LIST),
+  taskGetSnapshot: (): Promise<import("../shared/types").TaskSnapshot> =>
+    ipcRenderer.invoke(IPC.TASK_GET_SNAPSHOT),
+  taskCreate: (input: { title: string; priority?: number; tabId?: string }): Promise<import("../shared/types").Task> =>
+    ipcRenderer.invoke(IPC.TASK_CREATE, input),
+  taskCancel: (taskId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.TASK_CANCEL, taskId),
+  taskSwitch: (taskId: string): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.TASK_SWITCH, taskId),
+  taskSetPriority: (taskId: string, priority: number): Promise<boolean> =>
+    ipcRenderer.invoke(IPC.TASK_SET_PRIORITY, taskId, priority),
+
+  // Window / Floating Mode
+  toggleFloating: (): Promise<boolean> => ipcRenderer.invoke(IPC.FLOATING_TOGGLE),
+  onFloatingStateChanged: (callback: (floating: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, floating: boolean) => callback(floating);
+    ipcRenderer.on(IPC.FLOATING_STATE_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC.FLOATING_STATE_CHANGED, handler);
+  },
+
   // System
   getAppVersion: (): Promise<string> => ipcRenderer.invoke(IPC.GET_APP_VERSION),
 };

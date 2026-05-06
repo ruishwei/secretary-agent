@@ -2,16 +2,12 @@ import { LLMClient, type LLMConfig } from "./llm-client";
 import { ContextManager } from "./context-manager";
 import { ToolExecutor } from "./tool-executor";
 import { buildSystemPrompt, buildSkillsIndex, buildMemoryFlushPrompt } from "./prompt-templates";
-import { BrowserManager } from "../browser/browser-manager";
-import { BrowserStateProvider } from "../browser/browser-state-provider";
 import type { StateProvider } from "./state-provider";
 import type { SkillManager } from "../skills/skill-manager";
 import type { MemoryStore } from "../memory/memory-store";
+import type { PrivacyGuard } from "../security/privacy-guard";
 import type { AgentEvent } from "../../shared/types";
 import { MAX_AGENT_TOOL_TURNS } from "../../shared/constants";
-import { Logger } from "../utils/logger";
-
-const logger = new Logger("Agent");
 
 export interface AgentConfig {
   llm: LLMConfig;
@@ -24,6 +20,7 @@ export class AgentLoop {
   private stateProvider: StateProvider;
   private skillManager: SkillManager | null = null;
   private memoryStore: MemoryStore | null = null;
+  private privacyGuard: PrivacyGuard | null = null;
   private abortController: AbortController | null = null;
   private running = false;
   private turnCount = 0;
@@ -44,36 +41,8 @@ export class AgentLoop {
     this.memoryStore = ms;
   }
 
-  /**
-   * Initialize browser CDP connection.
-   */
-  async initialize(): Promise<void> {
-    const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
-    await bm.initialize();
-    logger.info("Agent loop initialized");
-  }
-
-  /**
-   * Attach CDP to a specific webview by its webContents ID and optional tab ID.
-   */
-  async attachBrowser(tabId: string, webContentsId: number): Promise<void> {
-    const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
-    await bm.attachToWebview(tabId, webContentsId);
-  }
-
-  /**
-   * Navigate the embedded browser to a URL on the active tab (or specified tab) and return a snapshot.
-   */
-  async navigateBrowser(url: string, tabId?: string) {
-    const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
-    return bm.navigate(url, tabId);
-  }
-
-  /**
-   * Direct access to BrowserManager for IPC handlers that need tab lifecycle methods.
-   */
-  getBrowserManager(): BrowserManager {
-    return (this.stateProvider as BrowserStateProvider).getBrowserManager();
+  setPrivacyGuard(pg: PrivacyGuard): void {
+    this.privacyGuard = pg;
   }
 
   /**
@@ -149,11 +118,11 @@ export class AgentLoop {
 
     try {
       // Wait for state provider to be ready
-      yield { type: "thinking", plan: "Waiting for browser to be ready..." };
+      yield { type: "thinking", plan: "Waiting for environment to be ready..." };
       try {
         await this.stateProvider.waitUntilReady();
       } catch {
-        yield { type: "error", message: "Browser is not ready. Please make sure the webview has loaded.", recoverable: true };
+        yield { type: "error", message: this.stateProvider.getNotReadyMessage?.() ?? "Environment is not ready. Please check plugin status.", recoverable: true };
         return;
       }
 
@@ -194,17 +163,22 @@ export class AgentLoop {
           }
         }
 
-        // Load memory snapshot (frozen at session start — writes don't refresh it)
+        // Load memory snapshots (frozen at session start — writes don't refresh them)
         const memorySection = this.memoryStore?.getMemorySnapshot();
+        const shallowMemorySection = this.memoryStore?.getRecentShallow();
         const userProfileSection = this.memoryStore?.getUserProfile();
         const skillsIndex = this.skillManager?.getSkillsIndex()
           ? buildSkillsIndex(this.skillManager.getSkillsIndex())
           : undefined;
 
+        const privacySection = this.privacyGuard?.getSystemPromptSection();
+
         const systemPrompt = buildSystemPrompt(sections, {
           memorySection,
+          shallowMemorySection,
           userProfileSection,
           skillsIndex,
+          privacySection,
         });
         this.context.setSystemPrompt(systemPrompt);
 
@@ -213,7 +187,7 @@ export class AgentLoop {
         // Call LLM
         yield {
           type: "thinking",
-          plan: `Turn ${this.turnCount}/${MAX_AGENT_TOOL_TURNS}: Analyzing page and deciding next action...`,
+          plan: `Turn ${this.turnCount}/${MAX_AGENT_TOOL_TURNS}: Analyzing current state and deciding next action...`,
         };
 
         let finalText = "";
@@ -273,27 +247,6 @@ export class AgentLoop {
             timestamp,
           };
         }
-
-        // Capture plan-time snapshot state so tools can detect stale @ref IDs.
-        // If the LLM planned multiple tool calls from a single snapshot, and the first
-        // tool refreshes the AX tree, subsequent refs are compared against this capture.
-        const bm = (this.stateProvider as BrowserStateProvider).getBrowserManager();
-        bm.forEachSession((session) => {
-          if (session.snapshot) {
-            const planNodes = new Map<string, { role: string; name: string; backendNodeId: number }>();
-            for (const [ref, node] of session.snapshot.nodes) {
-              planNodes.set(ref, {
-                role: node.role,
-                name: node.name,
-                backendNodeId: node.backendNodeId,
-              });
-            }
-            session.planSnapshotNodes = planNodes;
-            logger.info(`Plan snapshot captured: ${planNodes.size} nodes for tab ${session.tabId}`);
-          } else {
-            logger.warn(`Plan snapshot capture: session ${session.tabId} has no snapshot`);
-          }
-        });
 
         // Execute tools — wrapped to prevent orphaned tool_calls in context
         const toolResults: Array<{ toolCallId: string; name: string; result: string; isError?: boolean }> = [];
@@ -371,17 +324,7 @@ export class AgentLoop {
 
             // If a tool returned a fresh snapshot, update the prompt for the next LLM call
             if (toolResult.snapshot) {
-              const idx = sections.findIndex((s) => s.id === "browser:snapshot");
-              const snapSection = {
-                id: "browser:snapshot",
-                priority: 21,
-                content: `### Page Snapshot (Accessibility Tree)\n\`\`\`\n${toolResult.snapshot}\n\`\`\`\n\nUse the @ref IDs above to interact with page elements.`,
-              };
-              if (idx >= 0) {
-                sections[idx] = snapSection;
-              } else {
-                sections.push(snapSection);
-              }
+              this.stateProvider.upsertSnapshotSection?.(sections, toolResult.snapshot);
             }
           }
         } finally {
@@ -400,22 +343,21 @@ export class AgentLoop {
           }
           this.context.addToolResults(toolResults);
           // Clear plan snapshot captures — they're only valid for this turn
-          bm.forEachSession((session) => { session.planSnapshotNodes = null; });
+          this.stateProvider.clearPlanSnapshots?.();
         }
 
-        // Check if any tool updated the plan
+        // Check tool metas for special dispatch events
         for (const tc of finalToolCalls) {
-          if (tc.name === "browser_todo_write" && tc.input.items) {
+          const meta = this.toolExecutor.getToolMeta(tc.name);
+
+          if (meta?.emitsPlanUpdate && tc.input.items) {
             yield {
               type: "plan-update",
               items: tc.input.items as Array<{ id: string; text: string; status: "pending" | "in_progress" | "completed" }>,
             };
           }
-        }
 
-        // Check if any tool requires review
-        for (const tc of finalToolCalls) {
-          if (tc.name === "browser_request_review") {
+          if (meta?.emitsReviewRequired) {
             yield {
               type: "review-required",
               reviewType: (tc.input.reviewType as any) || "content-draft",

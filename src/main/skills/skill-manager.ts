@@ -5,6 +5,16 @@ import { Logger } from "../utils/logger";
 
 const logger = new Logger("SkillMgr");
 
+/**
+ * Standard Claude Skills directory layout:
+ *   skill-name/
+ *   ├── SKILL.md              # Required
+ *   ├── scripts/              # Optional - executable scripts
+ *   ├── references/           # Optional - detailed docs
+ *   └── assets/               # Optional - templates, etc.
+ */
+const SKILL_SUBDIRS = ["scripts", "references", "assets"] as const;
+
 export interface SkillMeta {
   name: string;
   category: string;
@@ -17,6 +27,7 @@ interface SkillFrontmatter {
   name?: string;
   description?: string;
   version?: string;
+  category?: string;
 }
 
 export class SkillManager {
@@ -47,27 +58,22 @@ export class SkillManager {
     const entries = fs.readdirSync(basePath, { withFileTypes: true });
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
-      const categoryPath = path.join(basePath, entry.name);
-      const skillDirs = fs.readdirSync(categoryPath, { withFileTypes: true });
-      for (const skillDir of skillDirs) {
-        if (!skillDir.isDirectory()) continue;
-        const skillPath = path.join(categoryPath, skillDir.name);
-        const skillMdPath = path.join(skillPath, "SKILL.md");
-        if (!fs.existsSync(skillMdPath)) continue;
+      const skillDir = path.join(basePath, entry.name);
+      const skillMdPath = path.join(skillDir, "SKILL.md");
+      if (!fs.existsSync(skillMdPath)) continue;
 
-        try {
-          const meta = this.parseSkill(skillMdPath, entry.name, skillPath);
-          if (meta) {
-            this.skills.set(meta.name, meta);
-          }
-        } catch (err) {
-          logger.warn(`Failed to parse skill at ${skillMdPath}: ${err}`);
+      try {
+        const meta = this.parseSkill(skillMdPath, skillDir);
+        if (meta) {
+          this.skills.set(meta.name, meta);
         }
+      } catch (err) {
+        logger.warn(`Failed to parse skill at ${skillMdPath}: ${err}`);
       }
     }
   }
 
-  private parseSkill(filePath: string, category: string, skillPath: string): SkillMeta | null {
+  private parseSkill(filePath: string, skillDir: string): SkillMeta | null {
     const content = fs.readFileSync(filePath, "utf-8");
     const frontmatter = this.parseFrontmatter(content);
 
@@ -79,10 +85,10 @@ export class SkillManager {
 
     return {
       name,
-      category,
+      category: frontmatter.category || "general",
       description: frontmatter.description || "",
       version: frontmatter.version || "1.0.0",
-      path: skillPath,
+      path: skillDir,
     };
   }
 
@@ -102,6 +108,9 @@ export class SkillManager {
     const verMatch = yaml.match(/^version:\s*(.+)$/m);
     if (verMatch) result.version = verMatch[1].trim();
 
+    const catMatch = yaml.match(/^category:\s*(.+)$/m);
+    if (catMatch) result.category = catMatch[1].trim();
+
     return result;
   }
 
@@ -114,22 +123,60 @@ export class SkillManager {
     return all;
   }
 
-  /** Load a skill's full SKILL.md content. Optionally load a specific file within the skill directory. */
+  /**
+   * Discover files in a skill's standard subdirectory.
+   * Returns relative paths (e.g., "scripts/validate.py").
+   */
+  listSubdir(name: string, subdir: string): string[] {
+    const skill = this.skills.get(name);
+    if (!skill) return [];
+
+    const dir = path.join(skill.path, subdir);
+    if (!fs.existsSync(dir)) return [];
+
+    const files: string[] = [];
+    this.collectFiles(dir, path.join(skill.path), files);
+    return files;
+  }
+
+  private collectFiles(dir: string, skillRoot: string, out: string[]): void {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isFile()) {
+        out.push(path.relative(skillRoot, full).replace(/\\/g, "/"));
+      } else if (e.isDirectory()) {
+        this.collectFiles(full, skillRoot, out);
+      }
+    }
+  }
+
+  /**
+   * Load a file from a skill directory. The `file` parameter is relative to the
+   * skill root. Omit to load SKILL.md.
+   * Examples: "SKILL.md", "scripts/validate.py", "references/api-guide.md"
+   */
   load(name: string, file?: string): string | null {
     const skill = this.skills.get(name);
     if (!skill) return null;
 
-    const filePath = file ? path.join(skill.path, file) : path.join(skill.path, "SKILL.md");
+    const filePath = file
+      ? path.resolve(skill.path, file)
+      : path.join(skill.path, "SKILL.md");
+
+    // Prevent path traversal outside the skill directory
+    if (!filePath.startsWith(path.resolve(skill.path) + path.sep) &&
+        filePath !== path.resolve(skill.path) + path.sep &&
+        filePath !== path.join(skill.path, "SKILL.md")) {
+      logger.warn(`Path traversal blocked: ${file}`);
+      return null;
+    }
 
     if (!fs.existsSync(filePath)) return null;
-    // Ensure the path is within the skill directory (prevent path traversal)
-    const resolved = path.resolve(filePath);
-    if (!resolved.startsWith(path.resolve(skill.path))) return null;
-
-    return fs.readFileSync(resolved, "utf-8");
+    return fs.readFileSync(filePath, "utf-8");
   }
 
-  /** Create a new skill in the user skills directory. */
+  /** Create a new skill following Claude Skills directory layout. */
   create(category: string, name: string, content: string): { success: boolean; error?: string } {
     // Validate name format
     if (!/^[a-z0-9._-]{1,64}$/.test(name)) {
@@ -141,26 +188,30 @@ export class SkillManager {
       return { success: false, error: "SKILL.md must have YAML frontmatter (--- ... ---)" };
     }
 
-    const skillDir = path.join(this.userSkillsPath, category, name);
+    const skillDir = path.join(this.userSkillsPath, name);
     if (fs.existsSync(skillDir)) {
-      return { success: false, error: `Skill '${name}' already exists in category '${category}'` };
+      return { success: false, error: `Skill '${name}' already exists` };
     }
 
     try {
       fs.mkdirSync(skillDir, { recursive: true });
+      // Also create standard subdirs for discoverability
+      for (const sub of SKILL_SUBDIRS) {
+        fs.mkdirSync(path.join(skillDir, sub), { recursive: true });
+      }
       fs.writeFileSync(path.join(skillDir, "SKILL.md"), content, "utf-8");
 
       // Add to in-memory registry
       const frontmatter = this.parseFrontmatter(content);
       this.skills.set(name, {
         name,
-        category,
+        category: frontmatter.category || category,
         description: frontmatter.description || "",
         version: frontmatter.version || "1.0.0",
         path: skillDir,
       });
 
-      logger.info(`Skill created: ${category}/${name}`);
+      logger.info(`Skill created: ${name}`);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: `Failed to create skill: ${err.message}` };

@@ -1,7 +1,7 @@
 {
-  "name": "browser-secretary-agent",
+  "name": "corona",
   "version": "0.1.0",
-  "description": "AI-powered browser secretary agent with human-in-the-loop control",
+  "description": "Corona — AI assistant with human-in-the-loop control, floating window mode, and self-evolution",
   "main": ".vite/build/index.js",
   "scripts": {
     "dev": "chcp 65001 > nul && electron-forge start",

@@ -20,7 +20,7 @@ export function getConfig(): ConfigData {
   if (configCache) return configCache;
 
   const userDataPath = app.getPath("userData");
-  const basePath = path.join(userDataPath, "browser-secretary-agent");
+  const basePath = path.join(userDataPath, "corona");
 
   // Ensure directories exist
   for (const dir of [

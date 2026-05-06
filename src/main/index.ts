@@ -4,7 +4,7 @@ import { registerIpcHandlers } from "./ipc/handlers";
 import { Logger, setLogDir } from "./utils/logger";
 
 // Initialize log file before any Logger instances are created
-setLogDir(path.join(app.getPath("userData"), "browser-secretary-agent"));
+setLogDir(path.join(app.getPath("userData"), "corona"));
 
 const logger = new Logger("Main");
 
@@ -21,7 +21,7 @@ function createWindow(): void {
     height: 900,
     minWidth: 1024,
     minHeight: 700,
-    title: "Browser Secretary Agent",
+    title: "Corona",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

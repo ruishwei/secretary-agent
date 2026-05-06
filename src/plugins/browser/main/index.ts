@@ -8,11 +8,17 @@ import type { Plugin, PluginContext, PluginToolContext } from "../../../main/cor
 import type { ToolHandler } from "../../../main/agent/tool-executor";
 import { BrowserManager } from "../../../main/browser/browser-manager";
 import { BrowserStateProvider } from "../../../main/browser/browser-state-provider";
-import { registerBrowserTools } from "../../../main/agent/tools/browser/register-browser-tools";
+import { registerBrowserTools } from "./tools/register-browser-tools";
+
+export interface BrowserPluginExports {
+  browserManager: BrowserManager;
+  stateProvider: BrowserStateProvider;
+}
 
 export function createBrowserPlugin(): Plugin {
   let browserManager: BrowserManager;
   let stateProvider: BrowserStateProvider;
+  let pluginCtx: PluginContext;
 
   return {
     manifest: {
@@ -23,6 +29,9 @@ export function createBrowserPlugin(): Plugin {
     },
 
     stateProviders: [], // populated after init
+
+    /** Plugin-specific services exposed to the host for IPC handlers. */
+    exports: {} as unknown as BrowserPluginExports,
 
     toolFactories: [
       (ctx: PluginToolContext): ToolHandler[] => {
@@ -49,9 +58,13 @@ export function createBrowserPlugin(): Plugin {
     },
 
     async init(ctx: PluginContext) {
+      pluginCtx = ctx;
       browserManager = new BrowserManager();
       stateProvider = new BrowserStateProvider(browserManager);
       this.stateProviders = [stateProvider];
+      const exp = this.exports as BrowserPluginExports;
+      exp.browserManager = browserManager;
+      exp.stateProvider = stateProvider;
 
       // Wire state push callback so tab navigation events reach the renderer
       browserManager.setStatePushCallback((state) => {
@@ -77,6 +90,10 @@ export function createBrowserPlugin(): Plugin {
       await browserManager.initialize();
       if (browserManager.tabCount === 0) {
         browserManager.createTab("tab-initial");
+        pluginCtx.sendToRenderer("browser:tab-list-changed", {
+          tabs: browserManager.getAllTabs(),
+          activeTabId: browserManager.activeTabId,
+        });
       }
     },
 

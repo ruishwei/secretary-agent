@@ -6,8 +6,8 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 
 const config: ForgeConfig = {
   packagerConfig: {
-    name: "Browser Secretary Agent",
-    executableName: "browser-secretary-agent",
+    name: "Corona",
+    executableName: "corona",
     icon: "./resources/icon",
     asar: true,
   },

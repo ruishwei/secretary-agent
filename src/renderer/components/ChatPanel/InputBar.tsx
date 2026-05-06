@@ -170,8 +170,7 @@ export function InputBar({ value, onChange, onSend, onAbort, isStreaming, onSett
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={isStreaming ? "Agent is working..." : "Type a command or /skill-name..."}
-          disabled={isStreaming}
+          placeholder={isStreaming ? "Queue another task (agent is working)..." : "Type a command or /skill-name..."}
           rows={2}
           className="w-full bg-transparent text-gray-100 rounded px-2 py-1 text-sm resize-none focus:outline-none placeholder-gray-500 disabled:opacity-50"
         />

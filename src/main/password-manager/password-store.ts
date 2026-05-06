@@ -15,7 +15,7 @@ export class PasswordStore {
   private filePath: string;
 
   constructor() {
-    const dir = path.join(app.getPath("userData"), "browser-secretary-agent");
+    const dir = path.join(app.getPath("userData"), "corona");
     fs.mkdirSync(dir, { recursive: true });
     this.filePath = path.join(dir, "passwords.json");
   }

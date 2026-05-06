@@ -5,14 +5,17 @@ import { DEFAULT_SETTINGS } from "../../shared/types";
 // ===== Chat Slice =====
 
 interface ChatSlice {
-  messages: ChatMessage[];
+  /** All messages, keyed by task ID. Default task "" is the catch-all for non-task messages. */
+  messagesByTaskId: Record<string, ChatMessage[]>;
+  activeChatTaskId: string;
   isStreaming: boolean;
-  addMessage: (msg: ChatMessage) => void;
-  updateLastAssistantMessage: (content: string) => void;
-  appendBlockToLastAssistant: (block: ChatMessageBlock) => void;
-  updateToolCallBlock: (toolCallId: string, result: string, success: boolean, durationMs?: number) => void;
+  setActiveChatTaskId: (taskId: string) => void;
+  addMessage: (msg: ChatMessage, taskId?: string) => void;
+  updateLastAssistantMessage: (content: string, taskId?: string) => void;
+  appendBlockToLastAssistant: (block: ChatMessageBlock, taskId?: string) => void;
+  updateToolCallBlock: (toolCallId: string, result: string, success: boolean, durationMs?: number, taskId?: string) => void;
   setStreaming: (streaming: boolean) => void;
-  clearMessages: () => void;
+  clearMessages: (taskId?: string) => void;
 }
 
 // ===== Browser Slice =====
@@ -87,27 +90,51 @@ export interface AgentAction {
 
 export type AppStore = ChatSlice & BrowserSlice & SessionSlice & RecordingSlice & SettingsSlice;
 
+function getTaskId(tid?: string): string {
+  return tid || "";
+}
+
 export const useStore = create<AppStore>((set) => ({
-  // Chat slice defaults
-  messages: [],
+  // Chat slice defaults — multi-task aware
+  messagesByTaskId: {},
+  activeChatTaskId: "",
   isStreaming: false,
-  addMessage: (msg) => set((s) => ({ messages: [...s.messages, msg] })),
-  updateLastAssistantMessage: (content) =>
+
+  setActiveChatTaskId: (taskId) =>
+    set((s) => ({
+      activeChatTaskId: taskId,
+      messagesByTaskId: s.messagesByTaskId[taskId]
+        ? s.messagesByTaskId
+        : { ...s.messagesByTaskId, [taskId]: [] },
+    })),
+
+  addMessage: (msg, taskId) =>
     set((s) => {
-      const msgs = [...s.messages];
+      const tid = getTaskId(taskId);
+      const msgs = [...(s.messagesByTaskId[tid] || []), msg];
+      return {
+        messagesByTaskId: { ...s.messagesByTaskId, [tid]: msgs },
+      };
+    }),
+
+  updateLastAssistantMessage: (content, taskId) =>
+    set((s) => {
+      const tid = getTaskId(taskId);
+      const msgs = [...(s.messagesByTaskId[tid] || [])];
       const lastIdx = msgs.length - 1;
       if (lastIdx >= 0 && msgs[lastIdx].role === "assistant") {
         msgs[lastIdx] = { ...msgs[lastIdx], content };
       }
-      return { messages: msgs };
+      return { messagesByTaskId: { ...s.messagesByTaskId, [tid]: msgs } };
     }),
-  appendBlockToLastAssistant: (block) =>
+
+  appendBlockToLastAssistant: (block, taskId) =>
     set((s) => {
-      const msgs = [...s.messages];
+      const tid = getTaskId(taskId);
+      const msgs = [...(s.messagesByTaskId[tid] || [])];
       const lastIdx = msgs.length - 1;
       if (lastIdx >= 0 && msgs[lastIdx].role === "assistant") {
         const msg = msgs[lastIdx];
-        // For thinking blocks, deduplicate by replacing the last thinking block
         if (block.type === "thinking") {
           const blocks = [...(msg.blocks || [])];
           const lastBlock = blocks[blocks.length - 1];
@@ -125,11 +152,13 @@ export const useStore = create<AppStore>((set) => ({
           msgs[lastIdx] = { ...msg, blocks };
         }
       }
-      return { messages: msgs };
+      return { messagesByTaskId: { ...s.messagesByTaskId, [tid]: msgs } };
     }),
-  updateToolCallBlock: (toolCallId, result, success, durationMs?) =>
+
+  updateToolCallBlock: (toolCallId, result, success, durationMs?, taskId?) =>
     set((s) => {
-      const msgs = [...s.messages];
+      const tid = getTaskId(taskId);
+      const msgs = [...(s.messagesByTaskId[tid] || [])];
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].role === "assistant" && msgs[i].blocks) {
           const blocks = msgs[i].blocks!.map((b) => {
@@ -142,10 +171,21 @@ export const useStore = create<AppStore>((set) => ({
           break;
         }
       }
-      return { messages: msgs };
+      return { messagesByTaskId: { ...s.messagesByTaskId, [tid]: msgs } };
     }),
+
   setStreaming: (streaming) => set({ isStreaming: streaming }),
-  clearMessages: () => set({ messages: [] }),
+
+  clearMessages: (taskId) =>
+    set((s) => {
+      if (taskId) {
+        const byId = { ...s.messagesByTaskId };
+        delete byId[taskId];
+        return { messagesByTaskId: byId };
+      }
+      // Clear all if no task specified
+      return { messagesByTaskId: {} };
+    }),
 
   // Browser slice defaults
   tabs: [],

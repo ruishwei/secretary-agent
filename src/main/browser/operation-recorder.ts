@@ -361,6 +361,7 @@ Return ONLY valid SKILL.md markdown with YAML frontmatter in this format:
 \`\`\`markdown
 ---
 name: <kebab-case-name>
+category: <logical-group>
 description: <one-line description of what this skill accomplishes>
 version: 1.0.0
 ---

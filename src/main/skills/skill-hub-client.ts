@@ -176,7 +176,7 @@ export class SkillHubClient {
       // Sanitize name for filesystem
       const safeName = skillName.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase();
       const safeCategory = category.replace(/[^a-zA-Z0-9._-]/g, "-").toLowerCase();
-      const installDir = path.join(targetDir, safeCategory, safeName);
+      const installDir = path.join(targetDir, safeName);
       fs.mkdirSync(installDir, { recursive: true });
 
       // Determine root prefix to strip (ZIP often wraps in a top-level dir)
@@ -209,8 +209,8 @@ export class SkillHubClient {
         }
       }
 
-      logger.info(`Skill installed: ${safeCategory}/${safeName}`);
-      return { success: true, skillName: `${safeCategory}/${safeName}` };
+      logger.info(`Skill installed: ${safeName}`);
+      return { success: true, skillName: safeName };
     } catch (err: any) {
       return { success: false, error: `Extraction failed: ${err.message}` };
     } finally {

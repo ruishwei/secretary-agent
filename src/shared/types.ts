@@ -95,15 +95,15 @@ export interface ToolCallRecord {
 // ===== Agent Events (streaming) =====
 
 export type AgentEvent =
-  | AgentThinkingEvent
-  | AgentToolStartEvent
-  | AgentToolProgressEvent
-  | AgentToolResultEvent
-  | AgentResponseEvent
-  | AgentReviewRequiredEvent
-  | AgentPlanUpdateEvent
-  | AgentErrorEvent
-  | AgentDoneEvent;
+  | (AgentThinkingEvent & { taskId?: string })
+  | (AgentToolStartEvent & { taskId?: string })
+  | (AgentToolProgressEvent & { taskId?: string })
+  | (AgentToolResultEvent & { taskId?: string })
+  | (AgentResponseEvent & { taskId?: string })
+  | (AgentReviewRequiredEvent & { taskId?: string })
+  | (AgentPlanUpdateEvent & { taskId?: string })
+  | (AgentErrorEvent & { taskId?: string })
+  | (AgentDoneEvent & { taskId?: string });
 
 export interface AgentThinkingEvent {
   type: "thinking";
@@ -303,6 +303,37 @@ export interface PasswordEntryInput {
   password: string;
 }
 
+// ===== Task Management =====
+
+export type TaskStatus = "pending" | "active" | "blocked" | "completed" | "cancelled";
+
+/** How a task relates to another task. */
+export type TaskRelation = "supersedes" | "depends-on" | "continues";
+
+export interface Task {
+  id: string;
+  title: string;
+  status: TaskStatus;
+  priority: number;
+  plan: PlanItem[];
+  conversationId: string;
+  tabId?: string;
+  createdAt: number;
+  deadline?: number;
+  /** Summary of the task result, set on completion. */
+  summary?: string;
+  /** Relationship to another task. */
+  relation?: { type: TaskRelation; taskId: string };
+}
+
+export interface TaskSnapshot {
+  tasks: Task[];
+  activeTaskId: string | null;
+  pendingCount: number;
+  activeCount: number;
+  completedToday: number;
+}
+
 // ===== Skills Management =====
 
 export interface SkillInfo {
@@ -318,6 +349,17 @@ export interface SkillInfo {
 export interface MemoryContent {
   memory: string;
   user: string;
+}
+
+export interface ConsciousnessEntry {
+  id: string;
+  taskId: string;
+  timestamp: number;
+  direction: "in" | "out";
+  eventType: string;
+  summary: string;
+  detail?: string;
+  tokenCount?: number;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

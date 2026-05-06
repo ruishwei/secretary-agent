@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Earth: dark night-side ocean tones -->
+    <radialGradient id="earth" cx="30%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#143250"/>
+      <stop offset="40%" stop-color="#0a1a2e"/>
+      <stop offset="78%" stop-color="#030a12"/>
+      <stop offset="100%" stop-color="#010408"/>
+    </radialGradient>
+
+    <!-- Thin atmosphere arc (behind Earth, offset upper-left — Earth masks most, leaving a bright rim) -->
+    <radialGradient id="atmosphere" cx="15%" cy="15%" r="58%">
+      <stop offset="0%" stop-color="#87CEEB" stop-opacity="0"/>
+      <stop offset="43%" stop-color="#87CEEB" stop-opacity="0"/>
+      <stop offset="47%" stop-color="#B3E5FC" stop-opacity="0.9"/>
+      <stop offset="50%" stop-color="#FFF8E1" stop-opacity="0.85"/>
+      <stop offset="53%" stop-color="#FFB74D" stop-opacity="0.5"/>
+      <stop offset="59%" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Outer corona / sunrise glow -->
+    <radialGradient id="corona" cx="18%" cy="18%" r="62%">
+      <stop offset="0%" stop-color="#FFCC80" stop-opacity="0.12"/>
+      <stop offset="35%" stop-color="#FFB74D" stop-opacity="0.06"/>
+      <stop offset="50%" stop-color="#FF9800" stop-opacity="0.1"/>
+      <stop offset="65%" stop-color="#000" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="10"/>
+    </filter>
+
+    <filter id="bigGlow">
+      <feGaussianBlur stdDeviation="24"/>
+    </filter>
+  </defs>
+
+  <!-- Space background -->
+  <circle cx="256" cy="256" r="248" fill="#020508"/>
+
+  <!-- Subtle stars -->
+  <circle cx="370" cy="125" r="1.2" fill="#FFF" opacity="0.45"/>
+  <circle cx="135" cy="380" r="0.9" fill="#FFF" opacity="0.3"/>
+  <circle cx="395" cy="355" r="0.8" fill="#FFF" opacity="0.25"/>
+  <circle cx="115" cy="155" r="1.0" fill="#FFF" opacity="0.2"/>
+  <circle cx="340" cy="400" r="0.7" fill="#FFF" opacity="0.2"/>
+
+  <!-- Large ambient sunrise glow (upper-left) -->
+  <circle cx="160" cy="150" r="140" fill="#FFB74D" opacity="0.035" filter="url(#bigGlow)"/>
+
+  <!-- Corona ring -->
+  <circle cx="256" cy="256" r="172" fill="url(#corona)" filter="url(#softGlow)"/>
+
+  <!-- Atmosphere halo — Earth masks the center, revealing only a thin bright arc at upper-left -->
+  <circle cx="256" cy="256" r="148" fill="url(#atmosphere)" filter="url(#glow)"/>
+
+  <!-- Hint of sun disk peeking from behind Earth (upper-left) -->
+  <circle cx="130" cy="130" r="55" fill="#FFF8E1" opacity="0.06" filter="url(#bigGlow)"/>
+
+  <!-- Earth sphere -->
+  <circle cx="256" cy="256" r="140" fill="url(#earth)"/>
+
+  <!-- Faint ocean-surface specular on the lit side -->
+  <ellipse cx="190" cy="180" rx="45" ry="25" fill="#1a4a7a" opacity="0.05" transform="rotate(-30 190 180)"/>
+</svg>

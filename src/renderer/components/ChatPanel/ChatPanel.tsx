@@ -1,21 +1,22 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { useStore } from "../../store";
-import type { ChatMessage } from "../../../shared/types";
 import { MessageBubble } from "./MessageBubble";
 import { InputBar, type Attachment } from "./InputBar";
+import { useSendMessage } from "../../hooks/useSendMessage";
 
 interface ChatPanelProps {
   onSettingsClick: () => void;
 }
 
 export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
-  const messages = useStore((s) => s.messages);
-  const isStreaming = useStore((s) => s.isStreaming);
-  const addMessage = useStore((s) => s.addMessage);
-  const updateLastAssistantMessage = useStore((s) => s.updateLastAssistantMessage);
+  const messagesByTaskId = useStore((s) => s.messagesByTaskId);
+  const activeChatTaskId = useStore((s) => s.activeChatTaskId);
+  const messages = messagesByTaskId[activeChatTaskId] || [];
+
   const appendBlockToLastAssistant = useStore((s) => s.appendBlockToLastAssistant);
   const updateToolCallBlock = useStore((s) => s.updateToolCallBlock);
   const setStreaming = useStore((s) => s.setStreaming);
+  const updateLastAssistantMessage = useStore((s) => s.updateLastAssistantMessage);
   const addAgentAction = useStore((s) => s.addAgentAction);
   const updateAgentActionResult = useStore((s) => s.updateAgentActionResult);
   const setAgentThinking = useStore((s) => s.setAgentThinking);
@@ -23,10 +24,12 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
   const setPlanItems = useStore((s) => s.setPlanItems);
   const clearAgentState = useStore((s) => s.clearAgentState);
 
+  const { send, taskIdRef, isStreaming } = useSendMessage();
+
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to bottom when new messages or blocks arrive
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
@@ -35,16 +38,15 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
   useEffect(() => {
     if (!window.electronAPI?.onAgentEvent) return;
     const unsubscribe = window.electronAPI.onAgentEvent((event: any) => {
+      const tid = event.taskId || taskIdRef.current || "";
       switch (event.type) {
         case "thinking":
-          // Only create thinking blocks for actual model reasoning, not generic status messages.
-          // Generic status ("Turn k/n", "Waiting...") uses the plan field only.
           if (event.reasoning) {
             appendBlockToLastAssistant({
               type: "thinking",
               thinking: event.plan ?? "",
               reasoning: event.reasoning,
-            });
+            }, tid);
           }
           break;
 
@@ -62,11 +64,10 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
             tool: event.tool,
             args: event.args,
             status: "running",
-          });
+          }, tid);
           break;
 
         case "tool-progress":
-          // Stream thinking/text progress from long-running tools (e.g. vision)
           if (event.progressType === "thinking") {
             setAgentThinking(event.content);
           }
@@ -74,12 +75,11 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
 
         case "tool-result":
           updateAgentActionResult(event.toolCallId, event.result, event.success);
-          updateToolCallBlock(event.toolCallId, event.result, event.success, event.durationMs);
+          updateToolCallBlock(event.toolCallId, event.result, event.success, event.durationMs, tid);
           break;
 
         case "response":
-          // Streaming text response — continuously update the content
-          updateLastAssistantMessage(event.text);
+          updateLastAssistantMessage(event.text, tid);
           break;
 
         case "review-required":
@@ -103,7 +103,7 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
           break;
 
         case "error":
-          updateLastAssistantMessage(`**Error:** ${event.message}`);
+          updateLastAssistantMessage(`**Error:** ${event.message}`, tid);
           setStreaming(false);
           clearAgentState();
           break;
@@ -111,53 +111,25 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
     });
     return unsubscribe;
   }, [
+    taskIdRef,
+    appendBlockToLastAssistant,
+    updateToolCallBlock,
+    setStreaming,
+    updateLastAssistantMessage,
     addAgentAction,
     updateAgentActionResult,
     setAgentThinking,
-    appendBlockToLastAssistant,
-    updateToolCallBlock,
-    updateLastAssistantMessage,
     setReviewRequest,
     setPlanItems,
-    setStreaming,
     clearAgentState,
   ]);
 
   const handleSend = useCallback(
     async (text: string, attachments?: Attachment[]) => {
-      if ((!text.trim() && (!attachments || attachments.length === 0)) || isStreaming) return;
-
-      const userMsg: ChatMessage = {
-        id: `msg-${Date.now()}`,
-        role: "user",
-        content: text || "[Image]",
-        timestamp: Date.now(),
-      };
-      addMessage(userMsg);
-
-      const assistantMsg: ChatMessage = {
-        id: `msg-${Date.now() + 1}`,
-        role: "assistant",
-        content: "",
-        timestamp: Date.now(),
-        blocks: [],
-      };
-      addMessage(assistantMsg);
-      setStreaming(true);
-
       setInputValue("");
-
-      try {
-        if (window.electronAPI?.sendMessage) {
-          await window.electronAPI.sendMessage({ text, attachments });
-        }
-      } catch (err) {
-        updateLastAssistantMessage(`**Error:** Failed to send message: ${err}`);
-        setStreaming(false);
-        clearAgentState();
-      }
+      await send(text, attachments);
     },
-    [isStreaming, addMessage, setStreaming, updateLastAssistantMessage, clearAgentState]
+    [send]
   );
 
   const handleAbort = useCallback(async () => {
@@ -175,8 +147,8 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
         {messages.length === 0 && (
           <div className="flex items-center justify-center h-full text-gray-500 text-sm">
             <div className="text-center">
-              <p className="text-lg mb-2">Browser Secretary Agent</p>
-              <p>Type a command or use voice to control the browser.</p>
+              <p className="text-lg mb-2">Corona</p>
+              <p>Type a command or use voice input.</p>
               <p className="mt-1 text-xs">Try: "Go to wikipedia.org and search for TypeScript"</p>
             </div>
           </div>
@@ -184,7 +156,6 @@ export function ChatPanel({ onSettingsClick }: ChatPanelProps) {
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
-        {/* Keep the streaming indicator minimal — the assistant bubble handles its own pulse */}
         {isStreaming && (
           <div className="text-center text-xs text-gray-600">
             {messages[messages.length - 1]?.content ? "..." : ""}
